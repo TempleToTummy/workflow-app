@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* Navy + cream. Warm off-white ground and paper-white cards, deep navy for
+   ink, actions, and the sidebar, with a brass accent for the active nav item.
+   Status colours stay semantic (blue = in progress, amber = review,
+   green = done, red = overdue) so the workflow reads at a glance. */
+:root {
+  --background: #f5efe3;   /* cream */
+  --surface: #fffcf5;      /* paper */
+  --ink: #17233a;          /* navy ink */
+  --ink-muted: #5f6a7d;
+  --line: #e4dac8;
+
+  --accent: #1e3a5f;       /* navy - primary action, progress, links */
+  --accent-soft: #e3e9f2;
+
+  --status-not-started: #6b7280;
+  --status-in-progress: #2f5fae;
+  --status-in-progress-soft: #e3eaf7;
+  --status-review: #b3742a;
+  --status-review-soft: #f7ebd8;
+  --status-done: #2c7a5b;
+  --status-done-soft: #e1efe7;
+
+  --overdue: #b33a30;
+  --overdue-soft: #f8e6e3;
+
+  --sidebar-bg: #14243d;   /* deep navy */
+  --sidebar-ink: #ece5d6;  /* cream text */
+  --sidebar-ink-muted: #9aa6bb;
+  --sidebar-border: rgba(236, 229, 214, 0.1);
+  --sidebar-hover: rgba(236, 229, 214, 0.06);
+  --sidebar-active-bg: rgba(226, 184, 118, 0.14);
+  --sidebar-active-ink: #e2b876; /* brass */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-overdue: var(--overdue);
+  --color-overdue-soft: var(--overdue-soft);
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-ink: var(--sidebar-ink);
+  --color-sidebar-ink-muted: var(--sidebar-ink-muted);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-active-bg: var(--sidebar-active-bg);
+  --color-sidebar-active-ink: var(--sidebar-active-ink);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-plex-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--ink);
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+.tabular {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}

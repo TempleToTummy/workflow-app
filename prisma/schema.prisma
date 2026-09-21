@@ -1,0 +1,570 @@
+// Prisma schema for the workflow dashboard.
+//
+// This mirrors the real KTAX data model found in the APEX export, adapted
+// to Postgres/Prisma conventions:
+//   - Project is a recurring WORKFLOW TEMPLATE, not a single task.
+//   - ProjectSubTask + ProjectTaskMap define an ordered checklist per project.
+//   - ProjectClientMap assigns a project to a client (turns the template on).
+//   - ClientActivity is the actual unit of work: one client, one project,
+//     one subtask, one accounting period. This is what staff check off.
+//   - AccountingPeriod + ProjectRecurring drive the monthly/quarterly/annual
+//     cadence and period rollover that the original app's triggers handled.
+//
+// Auth: the original app's login tables (APP_USER, APP_ROLES, reset tokens)
+// were NOT carried over, and EMPLOYEES.EMPLOYEE_PASSWORD (plain text in the
+// source) was never migrated. Auth is now self-contained instead: a Role enum
+// + passwordHash/inviteToken fields on Employee, and a Session model, hashed
+// with scrypt. See src/lib/auth.ts, src/lib/password.ts, src/proxy.ts.
+//
+// Left out of this first pass, deliberately:
+//   - CLIENT_TAX_EXTENSION, US_STATE, MONTHS, and the backup/temp tables
+//     (CLIENT_BKP_*, CORP_CONTACT_3162026, LIQ_LIC_TEMP). Can add these
+//     back later if the workflow needs them.
+//   - CORP_CONTACT.OWNER_SSN_NO is modeled as ssnEncrypted (String?) as a
+//     placeholder: this needs application-level encryption before any real
+//     SSNs go in it, it should never be stored as plain text.
+//
+// Runs on SQLite locally (zero setup). Switch provider to "postgresql" and
+// point DATABASE_URL at Supabase when you're ready to deploy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // change to "postgresql" for Supabase / production
+  url      = env("DATABASE_URL")
+}
+
+enum RecurringType {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+  ONE_TIME
+}
+
+enum ActivityStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  AWAITING_REVIEW
+  DONE
+}
+
+// A subtask under a ClientActivity step can be internal work (TEAM_TASK) or a
+// request for the client to provide something (CLIENT_TASK). The distinction
+// is presentational for now — there's no client portal or email yet.
+enum SubtaskKind {
+  TEAM_TASK
+  CLIENT_TASK
+}
+
+// Two account types, nothing more for now. ADMIN gets the Admin Menu and user
+// management; EMPLOYEE gets the operational app only.
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+// --- Lookups -----------------------------------------------------------
+
+model CorporationType {
+  id      String   @id @default(cuid())
+  name    String   @unique
+  clients Client[]
+}
+
+model BusinessType {
+  id      String   @id @default(cuid())
+  name    String   @unique
+  clients Client[]
+}
+
+model EmployeeType {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  employees Employee[]
+}
+
+// --- People --------------------------------------------------------------
+
+model Client {
+  id             String           @id @default(cuid())
+  companyName    String
+  corpTypeId     String?
+  corpType       CorporationType? @relation(fields: [corpTypeId], references: [id])
+  businessTypeId String?
+  businessType   BusinessType?    @relation(fields: [businessTypeId], references: [id])
+  address1       String?
+  address2       String?
+  city           String?
+  zipcode        String?
+  state          String?
+  phone          String?
+  fax            String?
+  taxId          String?          @unique // was FIN_NO
+  note           String?
+  coRegDate      DateTime?
+  coRegState     String?
+  renewMonth     String?
+  email          String?
+  groupName      String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  contacts           CorpContact[]
+  projectAssignments ProjectClientMap[]
+  activities         ClientActivity[]
+  documents          Document[]
+  assignmentNotes    AssignmentNote[]
+  emails             EmailMessage[]
+}
+
+model CorpContact {
+  id           String   @id @default(cuid())
+  clientId     String
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  firstName    String?
+  lastName     String?
+  mobile       String?
+  email        String?
+  // Placeholder only. Needs real application-level encryption (or a KMS
+  // backed column) before any real SSNs go in here, never plain text.
+  ssnEncrypted String?
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Employee {
+  id             String        @id @default(cuid())
+  firstName      String
+  lastName       String
+  employeeTypeId String?
+  employeeType   EmployeeType? @relation(fields: [employeeTypeId], references: [id])
+  email          String        @unique // the login identity — required
+  phone          String?
+  mobile         String?
+  country        String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // --- Auth ---
+  // passwordHash null = the account is invite-pending (no login yet). An admin
+  // creates the Employee row, sends the invite link, and the invitee sets the
+  // password via /invite/<token>. See src/lib/auth.ts.
+  role                 Role      @default(EMPLOYEE)
+  passwordHash         String?
+  inviteToken          String?   @unique
+  inviteTokenExpiresAt DateTime?
+  sessions             Session[]
+
+  // Password reset. Unlike inviteToken, only a SHA-256 hash of the reset token
+  // is stored: the raw token goes out by email and is never needed again, so
+  // there's no reason for a database read to be enough to take over an
+  // account. inviteToken predates this and is still stored raw — it should be
+  // migrated the same way.
+  resetTokenHash      String?   @unique
+  resetTokenExpiresAt DateTime?
+  // Set whenever the password changes (reset, invite acceptance, revoke), so
+  // "when did this account last change hands" is answerable.
+  passwordChangedAt   DateTime?
+
+  // Not present in the source schema, added so the dashboard can show
+  // who's responsible for a given task.
+  assignedActivities  ClientActivity[]
+  completedActivities ClientActivity[]   @relation("ActivityCompletedBy")
+  stepDefaults        ProjectTaskMap[]   @relation("StepDefaultAssignee")
+  engagementDefaults  ProjectClientMap[] @relation("EngagementDefaultAssignee")
+  uploadedDocuments   Document[]
+  authoredNotes       AssignmentNote[]
+  sentEmails          EmailMessage[]
+}
+
+// A logged-in session. The cookie (wf_session) holds this row's id verbatim —
+// it's a 256-bit random token, so it doesn't need separate hashing for this
+// app. Deleting the Employee cascades their sessions.
+model Session {
+  id         String   @id
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId])
+}
+
+// --- Recurrence engine -----------------------------------------------------
+
+model ProjectRecurring {
+  id       String             @id @default(cuid())
+  type     RecurringType      @unique
+  periods  AccountingPeriod[]
+  projects Project[]
+}
+
+model AccountingPeriod {
+  name        String           @id // e.g. "2026-08" for a monthly period
+  startDate   DateTime
+  endDate     DateTime
+  recurringId String
+  recurring   ProjectRecurring @relation(fields: [recurringId], references: [id])
+
+  activities ClientActivity[]
+
+  @@index([startDate, endDate])
+}
+
+// --- Workflow templates ----------------------------------------------------
+
+model Project {
+  id            String           @id @default(cuid())
+  name          String           @unique
+  description   String?
+  recurringId   String
+  recurring     ProjectRecurring @relation(fields: [recurringId], references: [id])
+  // The service's deadline rule: how many days AFTER the accounting period's
+  // end date the work is actually due. 0 = due on the last day of the period
+  // (the old hardcoded behaviour), 20 = sales tax due the 20th of the
+  // following month, 105 = an individual return due Apr 15 for a Dec 31 year
+  // end. Overridable per client (ProjectClientMap) and per step
+  // (ProjectTaskMap). See src/lib/due-dates.ts.
+  dueOffsetDays Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  subtasks          ProjectTaskMap[]
+  clientAssignments ProjectClientMap[]
+  activities        ClientActivity[]
+  documents         Document[]
+  assignmentNotes   AssignmentNote[]
+  emails            EmailMessage[]
+}
+
+model ProjectSubTask {
+  id   String  @id @default(cuid())
+  name String
+  note String?
+
+  taskMaps   ProjectTaskMap[]
+  activities ClientActivity[]
+}
+
+// The ordered checklist for a project: which subtasks, in what sequence.
+model ProjectTaskMap {
+  projectId         String
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subTaskId         String
+  subTask           ProjectSubTask @relation(fields: [subTaskId], references: [id], onDelete: Cascade)
+  sequence          Int // was TASK_SEQ_NO
+  // Who normally does this step. Expresses a role or skill ("Reviewer Layer 2
+  // is always Marcus"), so it wins over the engagement-level default.
+  defaultAssigneeId String?
+  defaultAssignee   Employee?      @relation("StepDefaultAssignee", fields: [defaultAssigneeId], references: [id], onDelete: SetNull)
+  // Internal milestone for this step, in days relative to the engagement's
+  // due date. Negative = earlier (e.g. -7 to have review done a week before
+  // the filing deadline). null = share the engagement's due date.
+  dueOffsetDays     Int?
+
+  @@id([projectId, subTaskId])
+}
+
+// Turns a project "on" for a client. Creating one of these is what should
+// generate the first period's ClientActivity rows (the source app did this
+// with a trigger, here it belongs in the server action that creates the
+// assignment).
+model ProjectClientMap {
+  clientId          String
+  client            Client    @relation(fields: [clientId], references: [id])
+  projectId         String
+  project           Project   @relation(fields: [projectId], references: [id])
+  active            Boolean   @default(true)
+  createSubtask     Boolean   @default(true)
+  startDate         DateTime?
+  completedDate     DateTime?
+  currentPeriod     String?
+  // Who owns this client's work on this service. Fills in every step that
+  // doesn't name its own specialist, so a rolled-forward period arrives
+  // assigned instead of blank — which is what made someone re-assign the same
+  // people to the same steps every single month.
+  defaultAssigneeId String?
+  defaultAssignee   Employee? @relation("EngagementDefaultAssignee", fields: [defaultAssigneeId], references: [id], onDelete: SetNull)
+  // Per-client override of Project.dueOffsetDays (this client negotiated a
+  // different turnaround, or has an extension on file). null = inherit.
+  dueOffsetDays     Int?
+  note              String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@id([clientId, projectId])
+}
+
+// The real unit of work: one client, one project, one subtask, one period.
+// Sequential completion (can't finish task 3 before task 1) and period
+// rollover (advance to next period once everything here is Done) are
+// business rules that live in the app layer now, not in DB triggers.
+model ClientActivity {
+  id                String           @id @default(cuid())
+  clientId          String
+  client            Client           @relation(fields: [clientId], references: [id])
+  projectId         String
+  project           Project          @relation(fields: [projectId], references: [id])
+  subTaskId         String
+  subTask           ProjectSubTask   @relation(fields: [subTaskId], references: [id])
+  periodName        String
+  period            AccountingPeriod @relation(fields: [periodName], references: [name])
+  status            ActivityStatus   @default(NOT_STARTED)
+  taskSeqNo         Int
+  // Materialized from the due-date rules (project offset + client override +
+  // step offset) at the moment the row is generated, so the dashboard can
+  // sort and filter on it in the database instead of recomputing per render.
+  // Recomputed whenever a rule changes — UNLESS dueDateOverridden is set,
+  // which marks a date a human typed in by hand and must not be clobbered.
+  dueDate           DateTime?
+  dueDateOverridden Boolean          @default(false)
+  // When this step was actually marked done, and by whom. updatedAt can't
+  // answer that — any later edit to notes or assignee clobbers it — and for a
+  // checklist with two reviewer sign-off steps, "who signed this off" has to
+  // have an answer.
+  completedAt       DateTime?
+  completedById     String?
+  completedBy       Employee?        @relation("ActivityCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  notes             String?
+  assigneeId        String?
+  assignee          Employee?        @relation(fields: [assigneeId], references: [id])
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  subtasks ActivitySubtask[]
+
+  @@unique([clientId, projectId, subTaskId, periodName])
+  @@index([status])
+  @@index([dueDate])
+}
+
+// An ad-hoc checklist nested under one ClientActivity step. Advisory only: a
+// subtask being open does NOT block the parent step from being marked DONE,
+// and the sequential-completion rule in src/lib/workflow.ts is unchanged. The
+// parent step just surfaces a done/total count.
+model ActivitySubtask {
+  id         String         @id @default(cuid())
+  activityId String
+  activity   ClientActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  name       String
+  kind       SubtaskKind    @default(TEAM_TASK)
+  done       Boolean        @default(false)
+  sequence   Int            @default(0)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([activityId])
+}
+
+// A running note on one engagement (a client + project pair). Not scoped to an
+// accounting period — notes carry across periods for the life of the
+// assignment. Newest-first in the UI.
+model AssignmentNote {
+  id        String    @id @default(cuid())
+  clientId  String
+  client    Client    @relation(fields: [clientId], references: [id])
+  projectId String
+  project   Project   @relation(fields: [projectId], references: [id])
+  body      String
+  authorId  String?
+  author    Employee? @relation(fields: [authorId], references: [id])
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([clientId, projectId])
+}
+
+// A file attached to an engagement. Shaped like a cloud object-storage record
+// on purpose: `bucket` + `storageKey` are the object address. Today
+// LocalObjectStore (src/lib/storage.ts) writes the bytes under ./.storage/
+// <bucket>/<storageKey>; swapping in a Supabase Storage backed ObjectStore
+// later needs no schema change.
+model Document {
+  id           String    @id @default(cuid())
+  clientId     String
+  client       Client    @relation(fields: [clientId], references: [id])
+  projectId    String
+  project      Project   @relation(fields: [projectId], references: [id])
+  periodName   String? // which accounting period it belongs to, if any
+  filename     String // original upload name, shown in the UI
+  mimeType     String
+  size         Int // bytes
+  bucket       String    @default("workflow-files")
+  storageKey   String    @unique
+  uploadedById String?
+  uploadedBy   Employee? @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime  @default(now())
+
+  @@index([clientId, projectId])
+}
+
+// --- Scheduled work generation ---------------------------------------------
+
+// One execution of a background job, kept so the firm can see that work is
+// actually being generated (and what the last run did) instead of trusting an
+// invisible cron. Today the only job is "period-generation"
+// (src/lib/scheduler.ts), which opens each active engagement's next accounting
+// period whether or not the previous one was finished — the app used to
+// generate the next period ONLY as a side effect of someone ticking the last
+// task done, so an engagement that fell behind silently stopped producing work.
+model SchedulerRun {
+  id                 String    @id @default(cuid())
+  job                String // "period-generation"
+  trigger            String // "cron" | "manual" | "auto"
+  status             String // "RUNNING" | "SUCCESS" | "FAILED"
+  startedAt          DateTime  @default(now())
+  finishedAt         DateTime?
+  engagementsScanned Int       @default(0)
+  periodsCreated     Int       @default(0)
+  activitiesCreated  Int       @default(0)
+  assignmentsClosed  Int       @default(0)
+  dueDatesWritten    Int       @default(0)
+  // Human-readable rundown of what happened, or the error if status FAILED.
+  detail             String?
+
+  @@index([job, startedAt])
+}
+
+// --- Email -----------------------------------------------------------------
+
+enum EmailDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum EmailStatus {
+  QUEUED // accepted by us, not handed to a provider yet
+  SENT // the provider accepted it
+  LOGGED // recorded only — no provider is configured, nothing was delivered
+  FAILED // the provider rejected it (see `error`)
+  DELIVERED // provider confirmed delivery
+  BOUNCED // provider reported a bounce
+  RECEIVED // inbound: a reply that arrived through the webhook
+}
+
+// One email, in or out. Messages hang off an engagement (client + project +
+// period) when they have one, so correspondence sits next to the work it's
+// about, but a message to a client with no project attached is also valid.
+//
+// Threading: every outbound message is given a `replyToken`, and its Reply-To
+// header carries that token (see src/lib/email.ts). When the client replies,
+// the inbound webhook pulls the token back out of the To: address and threads
+// the reply onto the same `threadKey` — which is how a two-way conversation
+// stays attached to the right engagement without guessing from the subject
+// line. A reply that arrives with no recoverable token falls back to matching
+// the sender's address against known client contacts.
+model EmailMessage {
+  id        String         @id @default(cuid())
+  direction EmailDirection
+  status    EmailStatus
+
+  // Engagement context. All optional: a message can be client-only (no
+  // project), or firm-level (no client at all, e.g. a test send).
+  clientId   String?
+  client     Client?  @relation(fields: [clientId], references: [id])
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id])
+  periodName String?
+
+  // Stable conversation id. Outbound seeds it; inbound replies inherit it.
+  threadKey  String
+  // The opaque token embedded in the Reply-To address of an outbound message.
+  replyToken String? @unique
+  // The provider's own id for the message, for support tickets and webhooks.
+  providerId String?
+  // Which transport handled it ("log", "resend"), so a message sent while
+  // nothing was configured is distinguishable later.
+  transport  String?
+
+  fromEmail String
+  fromName  String?
+  toEmail   String
+  toName    String?
+  // Comma-separated. Kept as text: this app never needs to query by cc.
+  cc        String?
+  subject   String
+  bodyText  String
+  bodyHtml  String?
+
+  templateKey String?
+  sentById    String?
+  sentBy      Employee? @relation(fields: [sentById], references: [id])
+
+  error      String?
+  createdAt  DateTime  @default(now())
+  sentAt     DateTime?
+  receivedAt DateTime?
+
+  @@index([clientId, projectId])
+  @@index([threadKey, createdAt])
+  @@index([direction, createdAt])
+  @@index([status])
+}
+
+// A reusable message. Bodies interpolate {{placeholders}} resolved from the
+// engagement being written about — see renderTemplate in src/lib/email.ts.
+// Built-in templates are seeded from the firm's real checklist steps
+// ("Document Received", "Report Sent to Client", "Review done by Client") and
+// can be edited; `builtIn` only marks where they came from.
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  subject     String
+  body        String
+  builtIn     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// --- Audit trail -------------------------------------------------------------
+
+// An append-only record of who changed what, and when.
+//
+// The app had createdAt/updatedAt and nothing else, so "who marked Reviewer
+// Layer 2 done, and when" had no answer — and updatedAt was clobbered by the
+// next unrelated edit to the same row. For a firm whose checklists contain two
+// reviewer sign-offs and a client approval, that gap matters the moment a
+// client disputes something.
+//
+// Nothing here is a foreign key, on purpose. An audit row has to outlive the
+// thing it describes: deleting a client, a project or an employee must not
+// erase the history of what was done to it. Ids are kept for filtering and
+// every row carries denormalized labels so it stays readable afterwards.
+model AuditEvent {
+  id String @id @default(cuid())
+
+  // What was touched: "ClientActivity", "Employee", "Client", "Project", …
+  entityType String
+  entityId   String
+  // Dotted verb: "status.changed", "assignee.changed", "password.reset", …
+  action     String
+
+  // Who did it. actorLabel survives the employee being deleted; actorId is
+  // null for things the system did on its own (scheduled work generation).
+  actorId    String?
+  actorLabel String
+
+  // One human sentence, written at record time so the log reads correctly even
+  // after the underlying names change.
+  summary   String
+  fromValue String?
+  toValue   String?
+
+  // Engagement context, for the per-client and per-engagement history views.
+  clientId     String?
+  projectId    String?
+  periodName   String?
+  contextLabel String?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([clientId, projectId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
