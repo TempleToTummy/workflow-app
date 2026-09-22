@@ -9,7 +9,20 @@ import { NextResponse, type NextRequest } from "next/server";
 // the Node.js runtime by default.
 
 const SESSION_COOKIE = "wf_session";
-const PUBLIC_PREFIXES = ["/login", "/invite", "/forgot-password", "/reset-password"];
+// /r/<token> is the client-facing request page. It is public by necessity:
+// the people it is for are the firm's clients, who have no account here, and
+// the 256-bit token in the URL is the credential. The page and its actions do
+// their own checking (src/lib/client-request-actions.ts) — token shape, a
+// hashed lookup, status, expiry and a per-token rate limit — and return one
+// identical failure for a bad, expired or revoked link so the route can't be
+// used to confirm which tokens are real.
+const PUBLIC_PREFIXES = [
+  "/login",
+  "/invite",
+  "/forgot-password",
+  "/reset-password",
+  "/r",
+];
 
 // Machine-callable endpoints. A scheduler has no session cookie, so bouncing
 // it to /login would break the nightly job; the same is true of the mail

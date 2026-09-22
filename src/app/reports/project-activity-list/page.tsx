@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { StatusBadge } from "@/components/status-badge";
+import { ReportHeader } from "@/components/report-header";
 
 export default async function ProjectActivityListPage() {
   const activities = await prisma.clientActivity.findMany({
@@ -26,13 +27,14 @@ export default async function ProjectActivityListPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
-      <Link href="/" className="text-sm text-ink-muted hover:text-accent">
+      <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Project Activity List</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        Every task row on file, grouped by client and period.
-      </p>
+      <ReportHeader
+        title="Project Activity List"
+        description="Every task row on file, grouped by client and period."
+        reportKey="project-activity-list"
+      />
 
       <div className="mt-6 flex flex-col gap-6">
         {[...groups.values()].map((g) => (

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { DeleteButton } from "@/components/delete-button";
 import { RoleSelect, AccountCell } from "@/components/employee-account-cell";
+import { EmployeeBillingCell } from "@/components/employee-billing-cell";
 import { deleteEmployee } from "@/lib/actions";
 
 export default async function EmployeesPage() {
@@ -20,6 +21,7 @@ export default async function EmployeesPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Employees</h1>
           <p className="mt-1 text-sm text-ink-muted">
             Create an employee, then send them the invite link to set a password.
+            Rate and weekly capacity feed the Time Summary report and the Workload view.
           </p>
         </div>
         <Link
@@ -31,12 +33,13 @@ export default async function EmployeesPage() {
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
-        <table className="w-full min-w-[820px] text-left text-sm">
+        <table className="w-full min-w-[980px] text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Email</th>
               <th className="px-4 py-3 font-medium">Role</th>
+              <th className="px-4 py-3 font-medium">Rate &amp; capacity</th>
               <th className="px-4 py-3 font-medium">Account</th>
               <th className="px-4 py-3 font-medium"></th>
             </tr>
@@ -55,6 +58,13 @@ export default async function EmployeesPage() {
                 <td className="px-4 py-3 text-ink-muted">{e.email}</td>
                 <td className="px-4 py-3">
                   <RoleSelect employeeId={e.id} role={e.role} />
+                </td>
+                <td className="px-4 py-3">
+                  <EmployeeBillingCell
+                    employeeId={e.id}
+                    hourlyRate={e.hourlyRate}
+                    weeklyCapacityMinutes={e.weeklyCapacityMinutes}
+                  />
                 </td>
                 <td className="px-4 py-3">
                   <AccountCell
@@ -81,7 +91,7 @@ export default async function EmployeesPage() {
             ))}
             {employees.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-ink-muted">
+                <td colSpan={6} className="px-4 py-10 text-center text-ink-muted">
                   No employees yet.
                 </td>
               </tr>

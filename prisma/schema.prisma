@@ -58,6 +58,27 @@ enum SubtaskKind {
   CLIENT_TASK
 }
 
+// What a client is being asked to do through a tokenized link. UPLOAD backs
+// "Document Received" (send us the bank statements); APPROVAL backs "Review
+// done by Client" (sign off on the report we sent). Those are the two steps
+// the firm spends the most time waiting on, which is why they're the two the
+// link supports rather than a general-purpose portal.
+enum ClientRequestKind {
+  UPLOAD
+  APPROVAL
+}
+
+// OPEN until the client acts. COMPLETED records that they did (an upload
+// landed, or an approval decision came back). CANCELLED is a staff revoke —
+// the link stops working immediately. There is deliberately no EXPIRED value:
+// expiry is a timestamp, and deriving "expired" from it means a link can't be
+// left in a lying state by a job that failed to run.
+enum ClientRequestStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
 // Two account types, nothing more for now. ADMIN gets the Admin Menu and user
 // management; EMPLOYEE gets the operational app only.
 enum Role {
@@ -117,6 +138,8 @@ model Client {
   documents          Document[]
   assignmentNotes    AssignmentNote[]
   emails             EmailMessage[]
+  timeEntries        TimeEntry[]
+  clientRequests     ClientRequest[]
 }
 
 model CorpContact {
@@ -148,6 +171,21 @@ model Employee {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  // --- Billing and capacity ---
+  // The rate this person's time is billed at, in whole currency units per
+  // hour. Null = not set, and every money figure derived from their time is
+  // then shown as "—" rather than zero: a rate nobody entered is unknown, not
+  // free. Each TimeEntry stamps the rate that applied when it was logged
+  // (TimeEntry.rateSnapshot), so raising a rate never rewrites past billing.
+  // Admin-only, in the UI and in every rollup that shows an amount.
+  hourlyRate            Float?
+  // How many minutes of work a week this person is expected to carry. The
+  // workload view compares committed hours against it to show a load bar;
+  // null just means the bar is hidden and the raw hours are shown instead.
+  // Nothing in the app blocks an assignment for exceeding it — the point is to
+  // make the number visible, not to enforce a quota.
+  weeklyCapacityMinutes Int?
+
   // --- Auth ---
   // passwordHash null = the account is invite-pending (no login yet). An admin
   // creates the Employee row, sends the invite link, and the invitee sets the
@@ -178,6 +216,10 @@ model Employee {
   uploadedDocuments   Document[]
   authoredNotes       AssignmentNote[]
   sentEmails          EmailMessage[]
+  timeEntries         TimeEntry[]
+  comments            TaskComment[]
+  mentions            TaskCommentMention[]
+  requestedFromClient ClientRequest[]      @relation("ClientRequestCreatedBy")
 }
 
 // A logged-in session. The cookie (wf_session) holds this row's id verbatim —
@@ -238,6 +280,8 @@ model Project {
   documents         Document[]
   assignmentNotes   AssignmentNote[]
   emails            EmailMessage[]
+  timeEntries       TimeEntry[]
+  clientRequests    ClientRequest[]
 }
 
 model ProjectSubTask {
@@ -264,6 +308,12 @@ model ProjectTaskMap {
   // due date. Negative = earlier (e.g. -7 to have review done a week before
   // the filing deadline). null = share the engagement's due date.
   dueOffsetDays     Int?
+  // How long this step is expected to take, in minutes. The template's
+  // estimate: it seeds ClientActivity.estimatedMinutes on every row generated
+  // from here on, which is what lets the workload view answer "how many HOURS
+  // is this person carrying" and not just "how many tasks". null = unknown,
+  // and unknown is reported as unknown rather than folded in as zero.
+  estimatedMinutes  Int?
 
   @@id([projectId, subTaskId])
 }
@@ -328,13 +378,25 @@ model ClientActivity {
   completedAt       DateTime?
   completedById     String?
   completedBy       Employee?        @relation("ActivityCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  // Copied from the step template (ProjectTaskMap.estimatedMinutes) when the
+  // row is generated, then editable per task — one client's data entry really
+  // does take three times as long as another's. Materialized for the same
+  // reason dueDate is: the workload view sums it in the database.
+  estimatedMinutes  Int?
+  // `notes` is the original single-string note field from the source app and
+  // is kept as-is for the admin grid. It is NOT the discussion channel: two
+  // people editing it in sequence means the second overwrites the first, which
+  // is exactly why TaskComment exists. New conversation belongs there.
   notes             String?
   assigneeId        String?
   assignee          Employee?        @relation(fields: [assigneeId], references: [id])
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  subtasks ActivitySubtask[]
+  subtasks       ActivitySubtask[]
+  comments       TaskComment[]
+  timeEntries    TimeEntry[]
+  clientRequests ClientRequest[]
 
   @@unique([clientId, projectId, subTaskId, periodName])
   @@index([status])
@@ -396,9 +458,16 @@ model Document {
   storageKey   String    @unique
   uploadedById String?
   uploadedBy   Employee? @relation(fields: [uploadedById], references: [id])
+  // Set when the CLIENT uploaded this through a tokenized request link rather
+  // than a member of staff through the Files tab. uploadedById is null in that
+  // case (no employee did it), so this is what distinguishes "nobody recorded
+  // who uploaded it" from "the client uploaded it themselves".
+  clientRequestId String?
+  clientRequest   ClientRequest? @relation(fields: [clientRequestId], references: [id], onDelete: SetNull)
   createdAt    DateTime  @default(now())
 
   @@index([clientId, projectId])
+  @@index([clientRequestId])
 }
 
 // --- Scheduled work generation ---------------------------------------------
@@ -567,4 +636,220 @@ model AuditEvent {
   @@index([clientId, projectId, createdAt])
   @@index([actorId, createdAt])
   @@index([createdAt])
+}
+
+// --- Time tracking -----------------------------------------------------------
+
+// One block of logged work. This is what billing, realization and "is this
+// client profitable" are computed from, so a few things are deliberate:
+//
+//   - `minutes` is materialized, not derived per query. It's written from
+//     startedAt/endedAt on the server when a timer stops, or typed directly
+//     for a manual entry. Rollups sum a column instead of subtracting
+//     timestamps across thousands of rows, and a manual entry doesn't need
+//     fake start/end times invented for it.
+//   - A running timer is `endedAt: null`. There is at most one of those per
+//     employee, enforced in the action layer (src/lib/time-actions.ts), not
+//     here — SQLite can't express a partial unique index through Prisma.
+//   - `rateSnapshot` copies Employee.hourlyRate at write time. Raising
+//     somebody's rate must not silently restate last quarter's billing, which
+//     is exactly what recomputing from the employee row would do.
+//   - The engagement columns are denormalized from the activity on purpose: a
+//     rollup per client has to work without joining through ClientActivity,
+//     and time logged against an engagement outlives any one task row.
+model TimeEntry {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  // Engagement context. Kept even when the activity is gone, which is why
+  // these are their own columns and activityId is nullable.
+  clientId   String?
+  client     Client?  @relation(fields: [clientId], references: [id])
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id])
+  periodName String?
+  // The specific checklist step the time was booked against, when there is
+  // one. SetNull rather than Cascade: deleting a task must not delete the
+  // record that somebody spent two hours on it.
+  activityId String?
+  activity   ClientActivity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+
+  startedAt DateTime
+  // null = the timer is still running. Nothing reads `minutes` for a running
+  // entry; the elapsed time is computed from startedAt at render time.
+  endedAt   DateTime?
+  minutes   Int       @default(0)
+
+  // Non-billable time is still time — internal admin, training, write-offs —
+  // and realization is precisely billable hours over total hours, so both have
+  // to be recorded rather than one of them being dropped.
+  billable  Boolean   @default(true)
+  note      String?
+  // "timer" | "manual". A timer's start and end are wall-clock facts; a manual
+  // entry's are a human's recollection, and telling them apart matters when a
+  // timesheet is questioned.
+  source    String    @default("timer")
+  // The employee's hourlyRate at the moment this was logged. Null when no rate
+  // was set — the rollups then report hours and leave the amount blank.
+  rateSnapshot Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([employeeId, startedAt])
+  @@index([clientId, projectId])
+  @@index([activityId])
+  // Finding the one running timer for an employee is the app's hottest time
+  // query — it runs on every page that shows the timer bar.
+  @@index([employeeId, endedAt])
+}
+
+// --- Task discussion ---------------------------------------------------------
+
+// A comment on one checklist step, optionally a reply to another comment.
+//
+// ClientActivity.notes could not serve this: it's a single string, so the
+// second person to write destroys the first person's note, and handoffs
+// between reviewer layers are exactly where two people write about the same
+// task. AssignmentNote couldn't either — it's engagement-level, has no
+// threading and no way to direct a message at a particular person.
+//
+// Threading is ONE level deep by design: a root comment and its replies.
+// Arbitrary nesting makes a handoff conversation harder to read, not easier,
+// and every deeper reply can address its root instead. The constraint is
+// enforced in the action layer (a reply to a reply is re-parented to the
+// root), so the data can never hold a chain the UI can't render.
+model TaskComment {
+  id         String         @id @default(cuid())
+  activityId String
+  activity   ClientActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  // null = a root comment. Deleting a root takes its replies with it: a reply
+  // orphaned from what it was answering is worse than no reply.
+  parentId String?
+  parent   TaskComment?  @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  TaskComment[] @relation("CommentThread")
+
+  // SetNull, not Cascade: a departed employee's handoff note is often the only
+  // record of why something was done, so it outlives their account. The UI
+  // falls back to authorLabel.
+  authorId String?
+  author   Employee? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  // Denormalized author name, for the same reason AuditEvent carries one.
+  authorLabel String
+
+  body String
+  // Set when the body is edited, so a comment somebody changed after the fact
+  // is visibly changed rather than quietly rewritten.
+  editedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  mentions TaskCommentMention[]
+
+  @@index([activityId, createdAt])
+  @@index([parentId])
+}
+
+// One resolved @mention. Written at comment time from the names actually
+// matched in the body (see src/lib/mentions.ts), not re-parsed on read: an
+// employee who is renamed later must not lose the mention, and a body edited
+// to remove a name must not un-notify someone who already read it.
+model TaskCommentMention {
+  id         String      @id @default(cuid())
+  commentId  String
+  comment    TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  // null = unread. This is the whole notification model: no separate
+  // notification table, because a mention IS the notification.
+  readAt     DateTime?
+  createdAt  DateTime    @default(now())
+
+  @@unique([commentId, employeeId])
+  @@index([employeeId, readAt])
+}
+
+// --- Client-facing requests --------------------------------------------------
+
+// A single-purpose, tokenized link handed to a client so they can do the one
+// thing the workflow is blocked on: send a document, or approve a report.
+//
+// "Document Received" and "Review done by Client" are real steps in the firm's
+// checklist, and before this there was no way to either ask for them or let
+// the client act — SubtaskKind.CLIENT_TASK was presentational. This is not a
+// client portal: there is no client login, no account, and no view of anything
+// but this one request. That is the point. A magic link with a hashed token and
+// an expiry is a much smaller thing to get right than an authentication system
+// for people outside the firm.
+//
+// Security shape, mirroring the password-reset design already in the app:
+//   - Only a SHA-256 hash of the token is stored. The raw token exists in the
+//     link and nowhere else, so a database read can't reopen a request.
+//   - Plain SHA-256 and not a KDF, for the same reason as reset tokens: the
+//     input is already 256 bits of randomness, so there is nothing to brute
+//     force and a KDF would only add latency to every lookup.
+//   - Expiry is a timestamp checked on every read, and CANCELLED kills a link
+//     immediately. Neither depends on a job running.
+//   - Completing a request does NOT mark the checklist step done. A client's
+//     upload can't be allowed to satisfy the sequential-completion rule or a
+//     reviewer sign-off; staff still tick the step. What the client's action
+//     does is remove the waiting and the chasing, which was the actual
+//     problem.
+model ClientRequest {
+  id        String  @id @default(cuid())
+  clientId  String
+  client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Which accounting period the request is about, so a document the client
+  // sends lands in the right period's Files tab.
+  periodName String?
+  // The step this unblocks. SetNull so revoking or regenerating a checklist
+  // never destroys the record of what was asked of a client.
+  activityId String?
+  activity   ClientActivity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+
+  kind   ClientRequestKind
+  status ClientRequestStatus @default(OPEN)
+
+  // What the client sees. `title` is the ask in one line ("August bank
+  // statements"); `message` is the optional note under it.
+  title   String
+  message String?
+
+  // SHA-256 of the raw token. Unique so a lookup is a single indexed read.
+  tokenHash String   @unique
+  expiresAt DateTime
+
+  createdById String?
+  createdBy   Employee? @relation("ClientRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  // Denormalized, so "who asked for this" survives the asker leaving.
+  createdByLabel String
+
+  // --- The client's response ---
+  completedAt DateTime?
+  // Free text the responder typed as their name. Deliberately NOT treated as
+  // identity: the token is the only authentication here, and this field is a
+  // courtesy label, which is why it is never used for authorization.
+  respondedByName String?
+  responseNote    String?
+  // APPROVAL only: true = approved, false = changes requested. null on an
+  // UPLOAD request, and null on an approval nobody has answered yet.
+  approved        Boolean?
+
+  // How many times the link has been opened, and when it last was. Enough to
+  // answer "did they even look at it" before someone picks up the phone.
+  viewCount  Int       @default(0)
+  lastViewedAt DateTime?
+
+  documents Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, projectId])
+  @@index([status, expiresAt])
+  @@index([activityId])
 }

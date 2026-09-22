@@ -8,9 +8,11 @@ import {
   renameChecklistTask,
   reorderChecklist,
   setChecklistTaskDueOffset,
+  setChecklistTaskEstimate,
   setStepDefaultAssignee,
 } from "@/lib/actions";
 import { describeStepOffset, clampOffset } from "@/lib/due-dates";
+import { formatMinutes, parseDuration } from "@/lib/time";
 
 export type ChecklistTask = {
   subTaskId: string;
@@ -21,6 +23,14 @@ export type ChecklistTask = {
   // Internal milestone for this step, in days relative to the engagement's due
   // date. null = due with the project. Negative = earlier.
   dueOffsetDays: number | null;
+  // How long this step usually takes, in minutes. Seeds
+  // ClientActivity.estimatedMinutes on every row generated from here on, which
+  // is what lets the workload view answer "how many HOURS is this person
+  // carrying" instead of only "how many tasks". Not retroactive: existing
+  // tasks keep whatever estimate they already have, because those are
+  // routinely corrected against the specific client and overwriting them from
+  // a template tidy-up would destroy the better number.
+  estimatedMinutes: number | null;
   // Who normally does this step, across every client on this project. Wins
   // over the engagement's default owner — it expresses a role, not ownership.
   defaultAssigneeId: string | null;
@@ -220,6 +230,18 @@ export function ProjectChecklistBuilder({
     });
   }
 
+  function handleEstimate(task: ChecklistTask, minutes: number | null) {
+    setError(null);
+    startTransition(async () => {
+      try {
+        await setChecklistTaskEstimate(projectId, task.subTaskId, minutes);
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't save the estimate.");
+      }
+    });
+  }
+
   function handleDefaultAssignee(task: ChecklistTask, employeeId: string) {
     setError(null);
     startTransition(async () => {
@@ -352,6 +374,12 @@ export function ProjectChecklistBuilder({
                 ))}
               </select>
 
+              <StepEstimate
+                task={task}
+                disabled={busy}
+                onSave={(minutes) => handleEstimate(task, minutes)}
+              />
+
               <StepOffset
                 task={task}
                 disabled={busy}
@@ -481,6 +509,85 @@ function StepOffset({
       }`}
     >
       {describeStepOffset(task.dueOffsetDays)}
+    </button>
+  );
+}
+
+// The step's typical duration. Same flexible grammar as every other duration
+// field in the app ("45", "1:30", "1.5h" — parseDuration in src/lib/time.ts),
+// so there is one way to type a length of time rather than one per form.
+//
+// Like the per-step deadline above, it stays invisible until hovered while
+// unset: most steps don't need one, and a row of empty controls on every step
+// would bury the ones that do.
+function StepEstimate({
+  task,
+  disabled,
+  onSave,
+}: {
+  task: ChecklistTask;
+  disabled: boolean;
+  onSave: (minutes: number | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(
+    task.estimatedMinutes === null ? "" : String(task.estimatedMinutes)
+  );
+
+  function commit() {
+    setEditing(false);
+    const text = value.trim();
+    if (text === "") {
+      if (task.estimatedMinutes !== null) onSave(null);
+      return;
+    }
+    const minutes = parseDuration(text);
+    // Unreadable input is discarded rather than guessed at — the button still
+    // shows the old value, so nothing was silently changed.
+    if (minutes === null || minutes <= 0) return;
+    if (minutes === task.estimatedMinutes) return;
+    onSave(minutes);
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        placeholder="1h 30m"
+        aria-label={`Typical time for "${task.name}". Blank means no estimate.`}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            setValue(task.estimatedMinutes === null ? "" : String(task.estimatedMinutes));
+            setEditing(false);
+          }
+        }}
+        className="tabular w-20 shrink-0 rounded-md border border-line bg-surface px-1.5 py-1 text-xs text-ink focus:ring-2 focus:ring-accent/40 focus:outline-none"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        setValue(task.estimatedMinutes === null ? "" : String(task.estimatedMinutes));
+        setEditing(true);
+      }}
+      title="Roughly how long this step takes. Used by the Workload view to turn task counts into hours. Applies to tasks generated from now on."
+      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] transition-colors disabled:opacity-40 ${
+        task.estimatedMinutes === null
+          ? "border-transparent text-ink-muted/60 opacity-0 group-hover:opacity-100 hover:border-line hover:text-ink-muted focus:opacity-100"
+          : "border-line text-ink-muted hover:text-ink"
+      }`}
+    >
+      {task.estimatedMinutes === null ? "est." : `~${formatMinutes(task.estimatedMinutes)}`}
     </button>
   );
 }

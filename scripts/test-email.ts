@@ -19,6 +19,16 @@ import {
   textToHtml,
 } from "../src/lib/email";
 
+// The library reads its addresses from the environment, and every reader but
+// the transport picker is lazy, so setting them here (rather than relying on a
+// .env that a fresh clone won't have) makes this script self-contained: `npm
+// test` passes from a clean checkout instead of only on a machine where these
+// happen to be exported.
+process.env.EMAIL_FROM = "workflow@example.com";
+process.env.EMAIL_FROM_NAME = "Workflow";
+process.env.EMAIL_INBOUND_DOMAIN = "reply.example.com";
+process.env.EMAIL_INBOUND_PREFIX = "reply";
+
 let pass = 0;
 let fail = 0;
 function check(label: string, actual: unknown, expected: unknown) {

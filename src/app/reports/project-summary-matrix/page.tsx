@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { deriveAssignmentStatus } from "@/lib/workflow";
 import { STATUS_LABEL } from "@/components/status-badge";
 import type { ActivityStatus } from "@prisma/client";
+import { ReportHeader } from "@/components/report-header";
 
 const STATUSES: ActivityStatus[] = ["NOT_STARTED", "IN_PROGRESS", "AWAITING_REVIEW", "DONE"];
 
@@ -35,13 +36,14 @@ export default async function ProjectSummaryMatrixPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-10">
-      <Link href="/" className="text-sm text-ink-muted hover:text-accent">
+      <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Project Summary Matrix</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        How many active clients are in each status, per service.
-      </p>
+      <ReportHeader
+        title="Project Summary Matrix"
+        description="How many active clients are in each status, per service."
+        reportKey="project-summary-matrix"
+      />
 
       <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">

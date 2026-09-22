@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { ReportHeader } from "@/components/report-header";
 
 export default async function ProjectTaskComparePage() {
   const projects = await prisma.project.findMany({
@@ -12,13 +13,14 @@ export default async function ProjectTaskComparePage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
-      <Link href="/" className="text-sm text-ink-muted hover:text-accent">
+      <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Project Task Compare</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        Every project&apos;s ordered checklist, side by side by step position.
-      </p>
+      <ReportHeader
+        title="Project Task Compare"
+        description="Every project's ordered checklist, side by side by step position."
+        reportKey="project-task-compare"
+      />
 
       <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">

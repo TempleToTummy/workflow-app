@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { StatusBadge } from "@/components/status-badge";
 import { deriveAssignmentStatus } from "@/lib/workflow";
+import { ReportHeader } from "@/components/report-header";
 
 export default async function ClientActivityMatrixPage() {
   const [clients, projects, assignments, activities] = await Promise.all([
@@ -29,13 +30,14 @@ export default async function ClientActivityMatrixPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
-      <Link href="/" className="text-sm text-ink-muted hover:text-accent">
+      <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Client Activity Matrix</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        Every client&apos;s current status across every service, at a glance.
-      </p>
+      <ReportHeader
+        title="Client Activity Matrix"
+        description="Every client's current status across every service, at a glance."
+        reportKey="client-activity-matrix"
+      />
 
       <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">

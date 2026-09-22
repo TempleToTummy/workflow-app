@@ -9,9 +9,15 @@ import {
   deleteActivitySubtask,
   setActivityAssignee,
   setActivityDueDate,
+  setActivityEstimate,
   toggleActivitySubtask,
 } from "@/lib/actions";
 import { formatDueDate, dueDateUrgency } from "@/lib/dates";
+import { formatMinutes, parseDuration } from "@/lib/time";
+import { TaskTimer } from "@/components/task-timer";
+import { TaskDiscussion } from "@/components/task-discussion";
+import type { RootComment } from "@/lib/comment-data";
+import type { MentionCandidate } from "@/lib/mentions";
 
 export type ChecklistSubtask = {
   id: string;
@@ -36,6 +42,19 @@ export type ChecklistStep = {
   completedBy: string | null;
   completedAt: string | null;
   subtasks: ChecklistSubtask[];
+  // How long this step is expected to take, seeded from the project's step
+  // template and then editable per task. Minutes; null = unknown, which the
+  // workload view reports as unknown rather than as zero.
+  estimatedMinutes: number | null;
+  // Minutes already booked against this step by anyone.
+  loggedMinutes: number;
+  // ISO start time when the viewer's running timer is on THIS step, else null.
+  timerSince: string | null;
+  // The step's discussion thread (roots with their replies).
+  comments: RootComment[];
+  // Open client requests hanging off this step, so the row says the work is
+  // blocked on somebody outside the firm rather than looking merely untouched.
+  openRequests: number;
 };
 
 type Employee = { id: string; name: string };
@@ -46,9 +65,19 @@ const selectClass =
 export function AssignmentChecklist({
   steps,
   employees,
+  people,
+  currentUserId,
+  isAdmin,
+  // True when a timer is running on some other task, so each step's button can
+  // say what pressing it will do.
+  timerRunningElsewhere,
 }: {
   steps: ChecklistStep[];
   employees: Employee[];
+  people: MentionCandidate[];
+  currentUserId: string;
+  isAdmin: boolean;
+  timerRunningElsewhere: boolean;
 }) {
   if (steps.length === 0) {
     return (
@@ -61,7 +90,16 @@ export function AssignmentChecklist({
   return (
     <ol className="flex flex-col gap-2">
       {steps.map((step, i) => (
-        <StepRow key={step.id} step={step} index={i} employees={employees} />
+        <StepRow
+          key={step.id}
+          step={step}
+          index={i}
+          employees={employees}
+          people={people}
+          currentUserId={currentUserId}
+          isAdmin={isAdmin}
+          timerRunningElsewhere={timerRunningElsewhere}
+        />
       ))}
     </ol>
   );
@@ -76,13 +114,26 @@ function StepRow({
   step,
   index,
   employees,
+  people,
+  currentUserId,
+  isAdmin,
+  timerRunningElsewhere,
 }: {
   step: ChecklistStep;
   index: number;
   employees: Employee[];
+  people: MentionCandidate[];
+  currentUserId: string;
+  isAdmin: boolean;
+  timerRunningElsewhere: boolean;
 }) {
   const router = useRouter();
-  const [expanded, setExpanded] = useState(step.subtasks.length > 0);
+  // Open a step that already has something to show — subtasks or a
+  // conversation — so a handoff note isn't hidden behind a disclosure
+  // triangle nobody thinks to click.
+  const [expanded, setExpanded] = useState(
+    step.subtasks.length > 0 || step.comments.length > 0
+  );
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<SubtaskKind>("TEAM_TASK");
   const [error, setError] = useState<string | null>(null);
@@ -195,14 +246,36 @@ function StepRow({
                 Signed off by {step.completedBy} · {step.completedAt}
               </p>
             )}
-            {subtasks.length > 0 && (
-              <p className="tabular text-[11px] text-ink-muted">
-                {doneCount}/{subtasks.length} subtasks
-              </p>
-            )}
+            <p className="tabular flex flex-wrap items-center gap-x-2 text-[11px] text-ink-muted">
+              {subtasks.length > 0 && (
+                <span>
+                  {doneCount}/{subtasks.length} subtasks
+                </span>
+              )}
+              {step.comments.length > 0 && (
+                <span>
+                  {step.comments.length +
+                    step.comments.reduce((n, c) => n + c.replies.length, 0)}{" "}
+                  comments
+                </span>
+              )}
+              {step.openRequests > 0 && (
+                <span className="font-medium text-[var(--status-review)]">
+                  waiting on client
+                </span>
+              )}
+            </p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <TaskTimer
+            activityId={step.id}
+            runningSince={step.timerSince}
+            loggedMinutes={step.loggedMinutes}
+            otherRunning={timerRunningElsewhere}
+            disabled={isPending}
+          />
+          <StepEstimate step={step} disabled={isPending} onError={setError} />
           <StepDueDate step={step} disabled={isPending} onError={setError} />
           <select
             value={assignee}
@@ -296,9 +369,104 @@ function StepRow({
             </button>
           </div>
           {error && <p className="mt-1.5 text-xs text-overdue">{error}</p>}
+
+          <TaskDiscussion
+            activityId={step.id}
+            comments={step.comments}
+            people={people}
+            currentUserId={currentUserId}
+            isAdmin={isAdmin}
+          />
         </div>
       )}
     </li>
+  );
+}
+
+// The step's time estimate, click to edit. Takes the same flexible input as
+// the time fields elsewhere ("45", "1:30", "1.5h" — see parseDuration in
+// src/lib/time.ts), so there is one duration grammar in the app rather than
+// one per form.
+//
+// Editing here changes THIS task only. The template's estimate lives on the
+// project's checklist and seeds new rows; correcting it here is the common
+// case ("Bluepoint's data entry always takes three times as long"), which is
+// exactly why a template change is not retroactive.
+function StepEstimate({
+  step,
+  disabled,
+  onError,
+}: {
+  step: ChecklistStep;
+  disabled: boolean;
+  onError: (message: string | null) => void;
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(
+    step.estimatedMinutes === null ? "" : String(step.estimatedMinutes)
+  );
+  const [isPending, startTransition] = useTransition();
+
+  function save(raw: string) {
+    setEditing(false);
+    const trimmed = raw.trim();
+    const minutes = trimmed === "" ? null : parseDuration(trimmed);
+    if (trimmed !== "" && minutes === null) {
+      onError("Enter an estimate like 45, 1:30 or 1.5h.");
+      return;
+    }
+    if (minutes === step.estimatedMinutes) return;
+    onError(null);
+    startTransition(async () => {
+      try {
+        await setActivityEstimate(step.id, minutes);
+        router.refresh();
+      } catch (err) {
+        onError(err instanceof Error ? err.message : "Couldn't set the estimate.");
+      }
+    });
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        defaultValue={draft}
+        disabled={isPending}
+        onBlur={(e) => save(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            save((e.target as HTMLInputElement).value);
+          } else if (e.key === "Escape") {
+            setEditing(false);
+          }
+        }}
+        placeholder="1h 30m"
+        aria-label="Estimate"
+        className="tabular w-20 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink focus:ring-2 focus:ring-accent/40 focus:outline-none"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled || isPending}
+      onClick={() => {
+        setDraft(step.estimatedMinutes === null ? "" : String(step.estimatedMinutes));
+        setEditing(true);
+      }}
+      title={
+        step.estimatedMinutes === null
+          ? "No estimate. Click to add one — this is what the workload view counts as hours."
+          : "Estimated time for this step. Click to change."
+      }
+      className="tabular shrink-0 rounded-md border border-transparent px-2 py-1 text-xs text-ink-muted hover:border-line disabled:opacity-50"
+    >
+      {step.estimatedMinutes === null ? "est." : `~${formatMinutes(step.estimatedMinutes)}`}
+    </button>
   );
 }
 

@@ -17,7 +17,9 @@ const STATUS_CLASSES: Record<ActivityStatus, string> = {
 export function StatusBadge({ status }: { status: ActivityStatus }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_CLASSES[status]}`}
+      // `status-badge` is what the print stylesheet keys on to keep these
+      // coloured on paper: green/amber/red IS the information in this cell.
+      className={`status-badge inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_CLASSES[status]}`}
     >
       {STATUS_LABEL[status]}
     </span>

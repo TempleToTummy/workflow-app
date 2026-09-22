@@ -65,3 +65,110 @@ body {
   font-family: var(--font-plex-mono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Print ----------------------------------------------------------------
+
+   The other half of "a report you can't get out of the app is half a report":
+   CSV covers reconciling the numbers, this covers handing a partner a piece of
+   paper. It applies to every page rather than only the reports, so printing
+   the dashboard or an engagement checklist also works.
+
+   The rules are the obvious ones, and each is there because without it the
+   printout is unusable:
+   - The sidebar and any control marked .no-print are dropped. A 64-unit navy
+     column down the left of every page wastes a quarter of the sheet and a
+     cartridge of ink.
+   - Backgrounds go white and ink goes black. The cream ground prints as a
+     grey wash.
+   - print-color-adjust: exact is kept for the status badges only, since the
+     colour IS the information there (green = done, red = overdue).
+   - Tables don't break mid-row, and headers repeat on each page — the default
+     is a row split across a page boundary and columns you can't identify on
+     page two.
+   - Link URLs are printed after the text. On paper a link is invisible
+     otherwise, and these reports are full of them. */
+@media print {
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
+  :root {
+    --background: #ffffff;
+    --surface: #ffffff;
+    --ink: #000000;
+    --ink-muted: #333333;
+    --line: #999999;
+    --accent: #000000;
+    --accent-soft: #f0f0f0;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* The app shell is a flex row with a fixed sidebar; on paper the main
+     column should simply be the page. */
+  body > main {
+    overflow: visible !important;
+  }
+
+  /* Reclaim the screen gutters — a printer applies its own margins. */
+  main > div {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  thead {
+    display: table-header-group; /* repeat headers on every page */
+  }
+
+  tr,
+  img,
+  svg {
+    break-inside: avoid;
+  }
+
+  /* A card that happens to straddle a page boundary is worse than a slightly
+     shorter page. */
+  .print-block {
+    break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+
+  /* Status badges carry meaning in their colour, so they keep it. */
+  .status-badge {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* Reveal link targets, which are otherwise invisible on paper. Internal
+     links are skipped: "/clients/abc123" tells a reader nothing. */
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.75em;
+    color: #555555;
+  }
+
+  /* Shown only when printing: stamps the page with what it is and when it was
+     produced, so a printout found on a desk next week is still identifiable. */
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* Hidden on screen, revealed by the print rule above. */
+.print-only {
+  display: none;
+}

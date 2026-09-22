@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { ReportHeader } from "@/components/report-header";
 
 const RECURRING_LABELS: Record<string, string> = {
   MONTHLY: "Monthly",
@@ -39,14 +40,14 @@ export default async function ProjectsStatusSummaryPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-10">
-      <Link href="/" className="text-sm text-ink-muted hover:text-accent">
+      <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Projects Status Summary</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        One line per service: how many clients are on it, and how far along they are this
-        period.
-      </p>
+      <ReportHeader
+        title="Projects Status Summary"
+        description="One line per service: how many clients are on it, and how far along they are this period."
+        reportKey="projects-status-summary"
+      />
 
       <div className="mt-6 flex flex-col gap-3">
         {rows.map(({ project, clientCount, done, taskCount }) => {

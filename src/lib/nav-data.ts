@@ -1,4 +1,5 @@
 export const REPORTS = [
+  { label: "Time Summary", href: "/reports/time-summary" },
   { label: "Project Activity List", href: "/reports/project-activity-list" },
   { label: "Projects Status Summary", href: "/reports/projects-status-summary" },
   { label: "Project Activity Status", href: "/reports/project-activity-status" },

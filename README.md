@@ -271,6 +271,113 @@ fills blanks — it never reassigns work someone has picked up.
 ./node_modules/.bin/tsx scripts/test-workflow-rules.ts   # precedence, tokens, rate limits
 ```
 
+## Time tracking
+
+A timer on any checklist step, manual entry, and rollups.
+
+- **Timer.** Press Start on a step. The clock shows in the step and in the
+  sidebar, so it can be stopped from anywhere. Starting a timer on a second
+  step stops the first one and tells you what it logged — switching tasks is
+  normal, and nothing is lost by it. **Discard** throws away a timer started
+  by mistake; it is only ever offered while a timer is running, so it can
+  never erase recorded time.
+- **Manual entry.** `/time`, or the Time tab on an engagement. The duration
+  box takes `90`, `1:30`, `1.5h` or `1h 30m` and echoes back how it read it
+  before you submit. A bare number means **minutes**.
+- **Rollups.** `/reports/time-summary` — per employee, per client and per
+  service, with realization (billable ÷ total) and value.
+
+Two rules worth knowing:
+
+- A **billing rate is frozen onto each entry** when the time is logged
+  (`TimeEntry.rateSnapshot`). Raising somebody's rate does not restate work
+  already recorded. Set rates and weekly capacity in Admin → Employees.
+- **An unset rate is unknown, not zero.** Money shows as `—` rather than
+  `$0.00`, and a rollup that could only price some of its hours says how many
+  it covered.
+
+Employees see only their own time, and never a money figure. A timesheet is
+personal data and a rate is commercially sensitive.
+
+A timer left running is capped at 16 hours when stopped, flagged, and given a
+note asking you to correct it — rather than silently producing a 400-hour
+entry.
+
+## Workload
+
+`/workload` (admin) shows what each person is carrying: open tasks, committed
+hours, load against their weekly capacity, and when it is all due.
+
+For hours to mean anything, steps need estimates. Set one on a project's
+checklist (Projects → open a service → the `est.` chip on a step); every task
+generated from then on carries it, and it is editable per task on the
+engagement. Like the due-date rules, changing a template estimate is **not**
+retroactive — per-task estimates are routinely corrected for a specific
+client, and a template tidy-up must not overwrite the better number.
+
+Work with no estimate is reported as unestimated, never counted as zero hours,
+and the load bar only appears where there is both a capacity and at least one
+estimate.
+
+## Client requests
+
+The checklist has two steps that wait on the client — "Document Received" and
+"Review done by Client". This is how you ask for them.
+
+From an engagement, **Client requests → Ask client**. Pick the blocked step
+(the wording fills itself in), choose whether you need a file or an approval,
+and create the link. It is emailed to the client's contact address if one is
+on file, and always shown for copying.
+
+The client opens `/r/<token>` — no account, no password — and either sends a
+file or approves. Their answer is posted into the task's discussion and any
+file lands in that period's Files tab.
+
+- The link expires after **14 days** and can be revoked instantly.
+- The raw token is shown **once**, at creation. "Re-issue link" mints a new
+  one and kills the old — which is also how you fix a link forwarded to the
+  wrong person.
+- Only a hash of the token is stored, so reading the database doesn't reopen
+  a client's request.
+- Uploads are limited to documents, spreadsheets, images and PDFs, 15 MB each.
+- Answering a request does **not** tick the checklist step. A client's upload
+  can't satisfy a reviewer sign-off; staff still close the step. What this
+  removes is the waiting and the chasing.
+
+`/requests` (admin) lists everything outstanding, sorted so the ones needing a
+phone call come first, and shows whether the client has even opened the link.
+
+## Task comments
+
+Each checklist step has a discussion thread — expand the step to see it.
+`ClientActivity.notes` is a single field that the second person to edit
+overwrites, which is exactly wrong for a reviewer handoff; comments replace it
+as the place a conversation happens.
+
+- One level of replies, so a handoff stays readable.
+- Type `@` and a colleague's name to pull them in. The composer confirms who
+  was notified, and **tells you when a name matched nobody** — that is the
+  failure that matters, because you think you just handed the task over.
+- Two people with the same first name? `@Dana` notifies neither and asks for
+  the full name, rather than guessing.
+- Mentions land in `/mentions`, with an unread count in the sidebar.
+- Editing a comment does not notify anyone new — post a new comment for that.
+
+## Export and print
+
+Every report has **Export CSV** and **Print** in its top-right corner, as do
+`/time`, `/workload` and `/requests`.
+
+- CSVs open cleanly in Excel (BOM, CRLF, RFC 4180 quoting) and are protected
+  against spreadsheet formula injection, which matters because client notes
+  are free text.
+- Matrix reports flatten to one row per cell so they can be pivoted.
+- Printing drops the sidebar and the controls, keeps status colours, repeats
+  table headers across pages and stamps the date.
+- Exports honour the same permissions as the pages: firm-wide reports are
+  admin-only, and an employee exporting their own timesheet gets hours without
+  rate columns.
+
 ## What's here
 
 - `prisma/schema.prisma` — the data model. Comments at the top explain what
@@ -290,7 +397,21 @@ fills blanks — it never reassigns work someone has picked up.
   accounting periods, plus the single row generator every path shares.
 - `src/lib/audit.ts` — the audit recorder and the vocabulary of actions.
   `src/lib/default-assignees.ts` — the two-layer assignee precedence.
-  `src/lib/rate-limit.ts` — throttling for sign-in and password reset.
+  `src/lib/rate-limit.ts` — throttling for sign-in, password reset and the
+  public client-request endpoints.
+- `src/lib/time.ts` — duration parsing, rollups, realization and date ranges.
+  `src/lib/workload.ts` — capacity maths. `src/lib/mentions.ts` — @mention
+  resolution. `src/lib/csv.ts` — CSV generation and the injection guard.
+  `src/lib/client-requests.ts` — the magic-link access decision and upload
+  rules. All pure, no `next/*` imports, all covered by `npm test`.
+- `src/lib/time-actions.ts`, `src/lib/comment-actions.ts`,
+  `src/lib/client-request-actions.ts` — the server actions for each; the
+  matching `*-data.ts` modules hold the reads (deliberately NOT `"use server"`,
+  so queries aren't published as POST endpoints).
+- `src/lib/report-export.ts` — one row builder per CSV export, served by
+  `src/app/api/export/[report]/route.ts`.
+- `src/components/error-state.tsx` / `skeleton.tsx` — the shared bodies behind
+  every `error.tsx`, `not-found.tsx` and `loading.tsx`.
 - `src/lib/email.ts` — the mail transport, reply-token threading, template
   rendering, and webhook signature verification. `src/lib/email-actions.ts`
   holds the server actions; `prisma/email-templates.ts` the built-in messages.
@@ -310,18 +431,32 @@ fills blanks — it never reassigns work someone has picked up.
 5. Run `npx prisma db seed` again if you want the sample data there too, or
    skip it and start entering real clients.
 
+## Tests
+
+```bash
+npm test     # 288 assertions across six scripts, no framework, no database
+```
+
+Every rule worth testing lives in a pure module with no `next/*` and no Prisma
+import, so `tsx script.ts` is a complete test runner. See `scripts/`.
+
 ## Not built yet
 
 - **Automatic** notifications. Email is wired up and reusable, but nothing
-  sends on its own yet: nobody is emailed when they're assigned work and no
-  digest goes out when a deadline is close. `sendEmailMessage` in
-  `src/lib/email-actions.ts` is the hook for both.
-- Time tracking, and any view of how loaded each person is.
-- A client-facing surface. `SubtaskKind.CLIENT_TASK` exists but is
-  presentational — the checklist has steps that wait on the client
-  ("Document Received", "Review done by Client") with no way to ask them.
+  sends on its own except a client-request link and a password reset: nobody
+  is emailed when they're assigned work, no digest goes out when a deadline is
+  close, and an @mention shows in the app but is not emailed.
+  `sendEmailMessage` in `src/lib/email-actions.ts` is the hook.
+- **Timesheet locking.** Entries can be corrected at any time, including for a
+  period already invoiced. Every edit and delete is audited, but nothing
+  freezes a timesheet — add a lock before this drives real billing.
+- **Virus scanning on client uploads.** Files from outside the firm are
+  allow-listed by type and size but not scanned.
+- A full client portal. The tokenized request link covers the two steps the
+  firm actually waits on; it is deliberately not a login, an account, or a
+  view of anything else.
 - Everything from the "not migrated yet" list in the schema file: tax
-  extensions, the client portal, billing.
+  extensions, billing.
 - Document uploads have a first pass now (Files tab on the assignment
   page). Bytes are stored on local disk under `.storage/` via a swappable
   `ObjectStore` (`src/lib/storage.ts`); swap in a Supabase Storage backed

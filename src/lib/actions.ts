@@ -13,6 +13,7 @@ import {
   MAX_OFFSET_DAYS,
 } from "@/lib/due-dates";
 import { resolveDefaultAssignees } from "@/lib/default-assignees";
+import { formatMinutes } from "@/lib/time";
 import { recordAudit, recordAuditMany, actorFrom, AUDIT, STATUS_WORDS } from "@/lib/audit";
 import { objectStore, documentStorageKey, DEFAULT_BUCKET } from "@/lib/storage";
 import { requireUser, requireAdmin } from "@/lib/auth";
@@ -1653,4 +1654,117 @@ export async function applyDefaultAssignees(
 
   revalidateAssignment(clientId, projectId);
   return updates.length;
+}
+
+// --- Estimates ----------------------------------------------------------------
+//
+// ClientActivity.estimatedMinutes is what turns the workload view from "how
+// many tasks is this person carrying" into "how many hours". It follows the
+// same two-layer, non-retroactive shape as the due-date rules and the default
+// assignees, because inconsistency between those three would be its own bug:
+//
+//   ProjectTaskMap.estimatedMinutes  — the template's estimate for a step
+//   ClientActivity.estimatedMinutes  — this task's estimate, seeded from the
+//                                      template and then editable
+//
+// Changing the template does NOT rewrite existing rows. Unlike a due date, an
+// estimate is frequently corrected against the specific client in front of you
+// ("Bluepoint's data entry always takes three times as long"), so silently
+// overwriting those corrections when somebody tidies a template would destroy
+// the more accurate number.
+
+// A whole working day. An estimate longer than this is a project, not a step,
+// and treating it as one step would make every capacity bar meaningless.
+const MAX_ESTIMATE_MINUTES = 24 * 60;
+
+function clampEstimate(minutes: number | null): number | null {
+  if (minutes === null) return null;
+  const rounded = Math.round(minutes);
+  if (!Number.isFinite(rounded) || rounded <= 0) return null;
+  if (rounded > MAX_ESTIMATE_MINUTES) {
+    throw new Error("An estimate for a single step can't exceed 24 hours.");
+  }
+  return rounded;
+}
+
+// The template layer, edited from the checklist builder on /projects/[id].
+export async function setChecklistTaskEstimate(
+  projectId: string,
+  subTaskId: string,
+  minutes: number | null
+) {
+  const user = await requireUser();
+  const value = clampEstimate(minutes);
+
+  const [taskMap, project] = await Promise.all([
+    prisma.projectTaskMap.findUniqueOrThrow({
+      where: { projectId_subTaskId: { projectId, subTaskId } },
+      include: { subTask: { select: { name: true } } },
+    }),
+    prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { name: true } }),
+  ]);
+  if (taskMap.estimatedMinutes === value) return;
+
+  await prisma.projectTaskMap.update({
+    where: { projectId_subTaskId: { projectId, subTaskId } },
+    data: { estimatedMinutes: value },
+  });
+
+  await recordAudit({
+    entityType: "ProjectTaskMap",
+    entityId: `${projectId}:${subTaskId}`,
+    action: AUDIT.ESTIMATE_CHANGED,
+    summary: `${project.name} · ${taskMap.subTask.name}: estimate ${
+      taskMap.estimatedMinutes ? formatMinutes(taskMap.estimatedMinutes) : "unset"
+    } → ${value ? formatMinutes(value) : "unset"} (applies to tasks generated from now on)`,
+    fromValue: taskMap.estimatedMinutes === null ? null : String(taskMap.estimatedMinutes),
+    toValue: value === null ? null : String(value),
+    projectId,
+    contextLabel: project.name,
+    actor: actorFrom(user),
+  });
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/workload");
+}
+
+// The per-task layer, edited inline on the assignment checklist.
+export async function setActivityEstimate(activityId: string, minutes: number | null) {
+  const user = await requireUser();
+  const value = clampEstimate(minutes);
+
+  const before = await prisma.clientActivity.findUniqueOrThrow({
+    where: { id: activityId },
+    include: {
+      subTask: { select: { name: true } },
+      client: { select: { companyName: true } },
+      project: { select: { name: true } },
+    },
+  });
+  if (before.estimatedMinutes === value) return;
+
+  await prisma.clientActivity.update({
+    where: { id: activityId },
+    data: { estimatedMinutes: value },
+  });
+
+  await recordAudit({
+    entityType: "ClientActivity",
+    entityId: activityId,
+    action: AUDIT.ESTIMATE_CHANGED,
+    summary: `${before.subTask.name}: estimate ${
+      before.estimatedMinutes ? formatMinutes(before.estimatedMinutes) : "unset"
+    } → ${value ? formatMinutes(value) : "unset"}`,
+    fromValue: before.estimatedMinutes === null ? null : String(before.estimatedMinutes),
+    toValue: value === null ? null : String(value),
+    clientId: before.clientId,
+    projectId: before.projectId,
+    periodName: before.periodName,
+    contextLabel: `${before.client.companyName} · ${before.project.name}`,
+    actor: actorFrom(user),
+  });
+
+  revalidateAssignment(before.clientId, before.projectId);
+  revalidatePath("/workload");
+  revalidatePath("/tasks");
 }

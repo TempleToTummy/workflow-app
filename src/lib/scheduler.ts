@@ -174,6 +174,12 @@ export async function openPeriodForAssignment(input: {
       status: "NOT_STARTED" as const,
       dueDate: dueDates.get(tm.subTaskId) ?? period.endDate,
       assigneeId: defaultAssignees.get(tm.subTaskId) ?? null,
+      // Seeded from the step template, then editable per task. Materialized
+      // here for the same reason dueDate is: the workload view sums it in the
+      // database rather than walking the template on every render. Not
+      // retroactive — changing a template estimate affects rows generated from
+      // then on, exactly like the due-date rules and the default assignees.
+      estimatedMinutes: tm.estimatedMinutes ?? null,
     })),
   });
 

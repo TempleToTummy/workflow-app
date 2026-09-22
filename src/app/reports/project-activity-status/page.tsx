@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { StatusBadge } from "@/components/status-badge";
 import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
 import { formatDueDate } from "@/lib/dates";
+import { ReportHeader } from "@/components/report-header";
 
 export default async function ProjectActivityStatusPage() {
   const [projects, assignments, activities, periods] = await Promise.all([
@@ -37,13 +38,14 @@ export default async function ProjectActivityStatusPage() {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
-      <Link href="/" className="text-sm text-ink-muted hover:text-accent">
+      <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Project Activity Status</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        Every service, and where each of its clients currently stands.
-      </p>
+      <ReportHeader
+        title="Project Activity Status"
+        description="Every service, and where each of its clients currently stands."
+        reportKey="project-activity-status"
+      />
 
       <div className="mt-6 flex flex-col gap-6">
         {groups.map(({ project, rows }) => (

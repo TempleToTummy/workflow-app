@@ -1,11 +1,12 @@
 import Link from "next/link";
 
-export type AssignmentTab = "list" | "files" | "notes";
+export type AssignmentTab = "list" | "files" | "notes" | "time";
 
 const TABS: { id: AssignmentTab; label: string }[] = [
   { id: "list", label: "List" },
   { id: "files", label: "Files" },
   { id: "notes", label: "Notes" },
+  { id: "time", label: "Time" },
 ];
 
 // Underline tab bar for the assignment detail page. Driven by the `?tab=`

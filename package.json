@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",

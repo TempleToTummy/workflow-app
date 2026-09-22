@@ -10,10 +10,23 @@ import { AssignmentNotes } from "@/components/assignment-notes";
 import { AssignmentDuePanel } from "@/components/assignment-due-panel";
 import { EngagementDefaults } from "@/components/engagement-defaults";
 import { EngagementHistory } from "@/components/engagement-history";
+import { ClientRequestPanel } from "@/components/client-request-panel";
+import { TimeEntryForm } from "@/components/time-entry-form";
+import { TimeEntryList, type TimeRow } from "@/components/time-entry-list";
 import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
 import { formatDueDate, formatDate } from "@/lib/dates";
 import { engagementDueDate, effectiveOffset } from "@/lib/due-dates";
 import { requireUser, assigneeScope } from "@/lib/auth";
+import { commentsForActivities, mentionCandidates } from "@/lib/comment-data";
+import {
+  listTimeEntries,
+  loggedMinutesByActivity,
+  runningTimer,
+  timeScope,
+} from "@/lib/time-data";
+import { rollUp, formatMinutes, formatMoney } from "@/lib/time";
+import { requestsForEngagement, bestContactFor } from "@/lib/client-request-data";
+import { describeRequest, suggestedKindForStep } from "@/lib/client-requests";
 
 function employeeName(e: { firstName: string; lastName: string }): string {
   return `${e.firstName} ${e.lastName}`;
@@ -45,7 +58,7 @@ export default async function AssignmentDetailPage({
     if (onIt === 0) redirect("/");
   }
   const tab: AssignmentTab =
-    tabParam === "files" || tabParam === "notes" ? tabParam : "list";
+    tabParam === "files" || tabParam === "notes" || tabParam === "time" ? tabParam : "list";
 
   const assignment = await prisma.projectClientMap.findUnique({
     where: { clientId_projectId: { clientId, projectId } },
@@ -104,6 +117,36 @@ export default async function AssignmentDetailPage({
     }),
   ]);
 
+  // Everything the new panels need, in one round of parallel reads rather
+  // than a query per checklist step.
+  const activityIds = activities.map((a) => a.id);
+  const [
+    commentsByActivity,
+    loggedByActivity,
+    people,
+    timer,
+    requests,
+    contact,
+    timeEntries,
+  ] = await Promise.all([
+    commentsForActivities(activityIds),
+    loggedMinutesByActivity(activityIds),
+    mentionCandidates(),
+    runningTimer(user.id),
+    requestsForEngagement({ clientId, projectId, periodName }),
+    bestContactFor(clientId),
+    listTimeEntries({ clientId, projectId, periodName }),
+  ]);
+
+  const scope = timeScope(user);
+  const timeRollup = rollUp(
+    timeEntries.map((e) => ({
+      minutes: e.minutes,
+      billable: e.billable,
+      rateSnapshot: e.rateSnapshot,
+    }))
+  );
+
   const periodByName = new Map(periodRecords.map((p) => [p.name, p]));
   const period = periodName ? (periodByName.get(periodName) ?? null) : null;
 
@@ -140,6 +183,13 @@ export default async function AssignmentDetailPage({
         ).padStart(2, "0")}`
       : null;
 
+  const openRequestsByActivity = new Map<string, number>();
+  for (const r of requests) {
+    if (r.activityId && r.status === "OPEN") {
+      openRequestsByActivity.set(r.activityId, (openRequestsByActivity.get(r.activityId) ?? 0) + 1);
+    }
+  }
+
   const steps = activities.map((a) => ({
     id: a.id,
     seq: a.taskSeqNo,
@@ -148,6 +198,11 @@ export default async function AssignmentDetailPage({
     assigneeId: a.assigneeId,
     dueDate: isoDay(a.dueDate),
     dueOverridden: a.dueDateOverridden,
+    estimatedMinutes: a.estimatedMinutes,
+    loggedMinutes: loggedByActivity.get(a.id) ?? 0,
+    timerSince: timer?.activityId === a.id ? timer.startedAt.toISOString() : null,
+    comments: commentsByActivity.get(a.id) ?? [],
+    openRequests: openRequestsByActivity.get(a.id) ?? 0,
     completedBy: a.completedBy ? employeeName(a.completedBy) : null,
     completedAt: a.completedAt ? formatDate(a.completedAt) : null,
     subtasks: a.subtasks.map((s) => ({
@@ -242,13 +297,28 @@ export default async function AssignmentDetailPage({
         basePath={basePath}
         active={tab}
         period={isCurrent ? null : periodName}
-        counts={{ files: documents.length, notes: notes.length }}
+        counts={{
+          files: documents.length,
+          notes: notes.length,
+          time: timeEntries.length,
+        }}
       />
 
       <div className="mt-6 flex flex-col gap-6 lg:flex-row">
         <div className="min-w-0 flex-1">
           {tab === "list" && (
-            <AssignmentChecklist steps={steps} employees={employeeOptions} />
+            <AssignmentChecklist
+              steps={steps}
+              employees={employeeOptions}
+              people={people}
+              currentUserId={user.id}
+              isAdmin={user.role === "ADMIN"}
+              // A timer running on some OTHER task, so each step's button can
+              // say that starting here will stop and log that one.
+              timerRunningElsewhere={Boolean(
+                timer && !activityIds.includes(timer.activityId ?? "")
+              )}
+            />
           )}
           {tab === "files" && (
             <AssignmentFiles
@@ -264,6 +334,63 @@ export default async function AssignmentDetailPage({
                 createdAt: d.createdAt.toISOString(),
               }))}
             />
+          )}
+          {tab === "time" && (
+            <div className="rounded-lg border border-line bg-surface p-6">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold tracking-wide text-ink-muted uppercase">
+                  Time on {periodName ?? "this engagement"}
+                </h2>
+                <p className="tabular text-sm text-ink">
+                  {formatMinutes(timeRollup.totalMinutes)} logged
+                  {timeRollup.billableMinutes !== timeRollup.totalMinutes && (
+                    <span className="text-ink-muted">
+                      {" "}
+                      · {formatMinutes(timeRollup.billableMinutes)} billable
+                    </span>
+                  )}
+                  {/* The amount is admin-only: a billing rate is commercially
+                      sensitive, and "can see the task" is not "can see what we
+                      charge for it". */}
+                  {scope.canSeeMoney && timeRollup.amount !== null && (
+                    <span className="text-ink-muted"> · {formatMoney(timeRollup.amount)}</span>
+                  )}
+                </p>
+              </div>
+
+              <div className="mt-4">
+                <TimeEntryForm currentEmployeeId={user.id} compact />
+                <p className="mt-1.5 text-[11px] text-ink-muted">
+                  This logs against the engagement. To book time to a particular step,
+                  start its timer on the List tab.
+                </p>
+              </div>
+
+              <div className="mt-5">
+                <TimeEntryList
+                  entries={timeEntries.map(
+                    (e): TimeRow => ({
+                      id: e.id,
+                      startedAt: e.startedAt.toISOString(),
+                      employeeName: `${e.employee.firstName} ${e.employee.lastName}`,
+                      clientName: null,
+                      projectName: null,
+                      taskName: e.activity?.subTask.name ?? null,
+                      minutes: e.minutes,
+                      billable: e.billable,
+                      source: e.source,
+                      note: e.note,
+                      rateSnapshot: scope.canSeeMoney ? e.rateSnapshot : null,
+                      editable: e.employeeId === user.id || user.role === "ADMIN",
+                      href: null,
+                    })
+                  )}
+                  showEmployee
+                  showMoney={scope.canSeeMoney}
+                  emptyMessage="No time logged against this period yet."
+                />
+              </div>
+            </div>
           )}
           {tab === "notes" && (
             <AssignmentNotes
@@ -289,6 +416,41 @@ export default async function AssignmentDetailPage({
             clientOffset={assignment.dueOffsetDays}
             engagementDue={engagementDue ? formatDueDate(engagementDue) : null}
             periodName={periodName}
+          />
+          <ClientRequestPanel
+            clientId={clientId}
+            projectId={projectId}
+            periodName={periodName}
+            contactEmail={contact?.email ?? null}
+            steps={steps.map((s) => ({
+              id: s.id,
+              name: s.name,
+              suggestedKind: suggestedKindForStep(s.name),
+            }))}
+            requests={requests.map((r) => {
+              const state = describeRequest({
+                kind: r.kind,
+                status: r.status,
+                expiresAt: r.expiresAt,
+                approved: r.approved,
+                documentCount: r.documents.length,
+              });
+              return {
+                id: r.id,
+                kind: r.kind,
+                title: r.title,
+                stepName: r.activity?.subTask.name ?? null,
+                stateLabel: state.label,
+                stateTone: state.tone,
+                expiresAt: r.expiresAt.toISOString(),
+                viewCount: r.viewCount,
+                lastViewedAt: r.lastViewedAt ? r.lastViewedAt.toISOString() : null,
+                documentCount: r.documents.length,
+                respondedByName: r.respondedByName,
+                responseNote: r.responseNote,
+                createdByLabel: r.createdByLabel,
+              };
+            })}
           />
           <EngagementDefaults
             clientId={clientId}

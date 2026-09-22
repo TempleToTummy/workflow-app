@@ -26,6 +26,24 @@ export const AUDIT = {
   // Configuration
   DUE_RULE_CHANGED: "due_rule.changed",
   DEFAULT_ASSIGNEE_CHANGED: "default_assignee.changed",
+  ESTIMATE_CHANGED: "estimate.changed",
+  RATE_CHANGED: "rate.changed",
+  CAPACITY_CHANGED: "capacity.changed",
+  // Time. Logged time is billing evidence, so every write leaves a row —
+  // including a deletion, which is the one somebody would want to question.
+  TIME_LOGGED: "time.logged",
+  TIME_EDITED: "time.edited",
+  TIME_DELETED: "time.deleted",
+  // Discussion
+  COMMENT_ADDED: "comment.added",
+  COMMENT_DELETED: "comment.deleted",
+  // Client-facing requests. Issuing one hands access to somebody outside the
+  // firm, and the client's answer is the evidence a filing was approved, so
+  // both ends of the exchange are recorded.
+  REQUEST_CREATED: "client_request.created",
+  REQUEST_REVOKED: "client_request.revoked",
+  REQUEST_VIEWED: "client_request.viewed",
+  REQUEST_RESPONDED: "client_request.responded",
   // People and access
   LOGIN_SUCCEEDED: "login.succeeded",
   LOGIN_FAILED: "login.failed",
@@ -145,6 +163,18 @@ const ACTION_META: Record<string, { label: string; tone: "neutral" | "good" | "w
   [AUDIT.PERIOD_OPENED]: { label: "Period", tone: "good" },
   [AUDIT.DUE_RULE_CHANGED]: { label: "Due rule", tone: "neutral" },
   [AUDIT.DEFAULT_ASSIGNEE_CHANGED]: { label: "Default assignee", tone: "neutral" },
+  [AUDIT.ESTIMATE_CHANGED]: { label: "Estimate", tone: "neutral" },
+  [AUDIT.RATE_CHANGED]: { label: "Billing rate", tone: "warn" },
+  [AUDIT.CAPACITY_CHANGED]: { label: "Capacity", tone: "neutral" },
+  [AUDIT.TIME_LOGGED]: { label: "Time logged", tone: "good" },
+  [AUDIT.TIME_EDITED]: { label: "Time edited", tone: "neutral" },
+  [AUDIT.TIME_DELETED]: { label: "Time deleted", tone: "bad" },
+  [AUDIT.COMMENT_ADDED]: { label: "Comment", tone: "neutral" },
+  [AUDIT.COMMENT_DELETED]: { label: "Comment removed", tone: "warn" },
+  [AUDIT.REQUEST_CREATED]: { label: "Client request sent", tone: "neutral" },
+  [AUDIT.REQUEST_REVOKED]: { label: "Client request revoked", tone: "warn" },
+  [AUDIT.REQUEST_VIEWED]: { label: "Client opened link", tone: "neutral" },
+  [AUDIT.REQUEST_RESPONDED]: { label: "Client responded", tone: "good" },
   [AUDIT.LOGIN_SUCCEEDED]: { label: "Sign in", tone: "neutral" },
   [AUDIT.LOGIN_FAILED]: { label: "Failed sign in", tone: "warn" },
   [AUDIT.PASSWORD_RESET_REQUESTED]: { label: "Reset requested", tone: "warn" },
@@ -179,7 +209,30 @@ export const AUDIT_FILTER_GROUPS: { heading: string; actions: string[] }[] = [
   },
   {
     heading: "Configuration",
-    actions: [AUDIT.DUE_RULE_CHANGED, AUDIT.DEFAULT_ASSIGNEE_CHANGED],
+    actions: [
+      AUDIT.DUE_RULE_CHANGED,
+      AUDIT.DEFAULT_ASSIGNEE_CHANGED,
+      AUDIT.ESTIMATE_CHANGED,
+      AUDIT.RATE_CHANGED,
+      AUDIT.CAPACITY_CHANGED,
+    ],
+  },
+  {
+    heading: "Time",
+    actions: [AUDIT.TIME_LOGGED, AUDIT.TIME_EDITED, AUDIT.TIME_DELETED],
+  },
+  {
+    heading: "Discussion",
+    actions: [AUDIT.COMMENT_ADDED, AUDIT.COMMENT_DELETED],
+  },
+  {
+    heading: "Client requests",
+    actions: [
+      AUDIT.REQUEST_CREATED,
+      AUDIT.REQUEST_VIEWED,
+      AUDIT.REQUEST_RESPONDED,
+      AUDIT.REQUEST_REVOKED,
+    ],
   },
   {
     heading: "Access",

@@ -486,6 +486,190 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   - Employee relations for the new assignee fields use onDelete: SetNull, so
     deleting an employee clears defaults rather than failing or cascading.
 
+- Tier 2 (time tracking, workload, client requests, task comments, export,
+  error states). Six features, and the decisions inside them matter more than
+  the feature list:
+
+  - Time tracking (TimeEntry). A timer on any checklist step, manual entry,
+    and per-employee / per-client / per-service rollups at
+    /reports/time-summary.
+    - `minutes` is MATERIALIZED, not derived per query: rollups sum a column
+      instead of subtracting timestamps across thousands of rows, and a manual
+      entry doesn't need fake start/end times invented for it.
+    - At most one running timer per employee, enforced in the action layer
+      (SQLite can't express a partial unique index through Prisma). Starting a
+      second one stops the first AND SAYS SO — switching tasks is what people
+      do all day, and an app that makes you find the old timer first is one
+      whose timer nobody uses.
+    - `rateSnapshot` freezes Employee.hourlyRate on each entry at write time.
+      Raising a rate must not restate last quarter's billing, which is exactly
+      what recomputing from the employee row would do. The audit entry for a
+      rate change says so explicitly, because "did this restate last month?"
+      is the first question asked.
+    - A rate that was never set is NULL, and null is carried to the UI as "—",
+      never as $0.00. A rollup that prices only part of its hours reports
+      `ratedMinutes` alongside, so it can't imply it priced work it couldn't.
+    - Realization for an empty range is null, not 0%. 0/0 is a question with no
+      answer, and "0% realization" on a week with no time reads as a problem
+      rather than an absence of data.
+    - A forgotten timer is CAPPED at 16h when stopped, flagged, and given a
+      note asking for correction — not silently shortened, and not left to
+      accrue for days.
+    - Visibility: an EMPLOYEE sees only their own time and no money at all.
+      A timesheet is personal data and a rate is commercially sensitive, so
+      "can see the task" deliberately does not imply "can see what we charge
+      for it". The rate is stripped server-side, not hidden in CSS.
+    - The running timer lives in the SIDEBAR, so it can be stopped from
+      anywhere. "Discard" sits next to "Stop" because the most common timer
+      mistake is starting one on the wrong task, and it is only ever offered
+      for a running timer — it can never erase recorded time.
+    - Durations parse what people actually type ("90", "1:30", "1.5h",
+      "1h 30m") and the parse is echoed back under the box before submitting.
+      A bare integer is MINUTES, not hours: guessing hours would turn a
+      45-minute entry into a 45-hour one.
+
+  - Workload / capacity (/workload, admin-only). Open tasks, committed hours,
+    load against capacity, and the due spread, per person.
+    - This needed two new fields to be answerable at all:
+      ProjectTaskMap.estimatedMinutes (the template's estimate) and
+      ClientActivity.estimatedMinutes (materialized at generation, then
+      editable per task), plus Employee.weeklyCapacityMinutes.
+    - Estimates follow the SAME two-layer, non-retroactive shape as the
+      due-date rules and the default assignees. Deliberately: a per-task
+      estimate is routinely corrected against the specific client in front of
+      you ("Bluepoint's data entry takes three times as long"), so a template
+      tidy-up overwriting those would destroy the better number.
+    - Unestimated work is reported as unestimated, never folded in as zero.
+      Twelve tasks with no estimates is twelve tasks of UNKNOWN size, and the
+      table has its own column saying so.
+    - The load bar is drawn only where there is BOTH a capacity and at least
+      one estimate. Two different "no data" cases both withhold the
+      percentage, and the page says which one applies.
+    - Nothing here blocks an assignment. It makes the number visible; the
+      decision stays with a person. The "lightest load" hint ranks people with
+      a MEASURED load above people with an unknown one — an empty-looking
+      plate that is empty only because nothing was estimated is not evidence
+      of spare capacity.
+
+  - Client-facing requests (ClientRequest, public /r/<token>). The two steps
+    the firm waits on most — "Document Received" and "Review done by Client" —
+    can now be asked for and answered without an account.
+    - NOT a client portal, on purpose: no login, no account, no view of
+      anything but the one request. A magic link with a hashed token and an
+      expiry is a far smaller thing to get right than authentication for
+      people outside the firm.
+    - Only a SHA-256 hash of the token is stored, exactly like password reset
+      (and plain SHA-256 for the same reason: the input is already 256 bits of
+      randomness, so there is nothing to brute force). The raw token is
+      returned ONCE, at creation, and the UI says so — "re-issue" mints a new
+      one and kills the old, which is also the fix for a link forwarded to the
+      wrong person.
+    - Every public action takes the raw token and NOTHING else that identifies
+      an engagement. A clientId in the payload would let anyone write to any
+      client by editing the request; every id is read back from the token's
+      own row.
+    - One identical failure message for a bad, expired, revoked or unknown
+      token, so the route can't be used to confirm which tokens are real.
+      Per-token rate limiting on top.
+    - Completing a request does NOT mark the checklist step done. A client's
+      upload must not satisfy the sequential-completion rule or a reviewer
+      sign-off. What it does is post into the task's discussion and stop the
+      chasing, which was the actual problem.
+    - Uploads are allow-listed by extension (documents, spreadsheets, images,
+      PDFs — nothing that executes), judged on the LAST extension so
+      "invoice.pdf.exe" is refused, checked in the browser first so a client
+      isn't left watching a doomed 15 MB upload, and re-checked on the server.
+    - An UPLOAD request stays OPEN after a file lands (clients send statements
+      in three messages); an APPROVAL closes on the decision.
+    - The public page reads a deliberately NARROW projection, not the row plus
+      its relations, so it is structurally incapable of showing another
+      client's work. It is noindex, and it lists received filenames without
+      download links — this page hands things TO the firm.
+    - /requests is the "what are we waiting on" view, sorted so the ones
+      needing a phone call come first (expired, then never-opened). viewCount
+      answers "have they even looked at it" before somebody picks up the
+      phone.
+
+  - Threaded task comments (TaskComment + TaskCommentMention). ClientActivity.
+    notes is still there and still editable from the admin grid, but it is no
+    longer the discussion: a single string means the second person to write
+    destroys the first person's note, which is precisely the reviewer-handoff
+    case.
+    - Threading is ONE level (a root and its replies), enforced in the action
+      layer — a reply to a reply is re-parented onto the root, so the data can
+      never hold a chain the UI can't render.
+    - @mentions are resolved ONCE at write time against the employee list as
+      it is then, and stored as rows. Re-parsing on read would let a rename
+      silently change who a six-month-old comment mentioned, and an edit
+      un-notify somebody already told. Editing therefore does NOT re-notify,
+      and the composer says so.
+    - An ambiguous first name (two Danas) resolves to NOBODY and asks for the
+      full name. Notifying the wrong Dana about a reviewer handoff is worse
+      than notifying neither.
+    - An @name matching nobody is REPORTED BACK to the author. This is the
+      failure that matters: they believe they just handed the task over. It is
+      never highlighted, since highlighting promises a notification that was
+      never sent.
+    - A mention row IS the notification — there is no second table to fall out
+      of step with the comments. /mentions is the inbox; opening the task
+      marks it read.
+    - Only the author may edit; author or admin may delete. Putting words in
+      somebody else's mouth in a handoff record is a different thing from
+      removing a comment that shouldn't be there.
+    - Client answers arrive as comments with a null authorId, rendered
+      distinctly, so the conversation and the client's reply are in one place.
+
+  - Export and print (src/lib/csv.ts, /api/export/<report>, print stylesheet).
+    All eight original reports plus the four new views export to CSV, and
+    every page prints.
+    - The formula-injection guard is the part that is NOT optional: a cell
+      starting with =, +, - or @ is EXECUTED by Excel, Sheets and LibreOffice,
+      and client notes are free text typed by people. Without it the app is an
+      injection vector into whatever machine opens the export. A genuine
+      negative number stays numeric so finance reports still add up.
+    - UTF-8 BOM, CRLF and RFC 4180 quoting, plus quoting for leading/trailing
+      whitespace so values round-trip through parsers that trim.
+    - Matrix reports FLATTEN to one row per cell. A spreadsheet's advantage is
+      that it can pivot, filter and sum a flat table; a grid pasted into Excel
+      can do none of those. The small fixed grid (Project Summary Matrix)
+      keeps its shape, since its column count can't grow.
+    - The route re-checks the ADMIN role itself. src/proxy.ts only knows
+      whether a cookie exists, so without this an employee could pull the
+      whole firm's data through /api/export even though the page refuses them.
+      An employee CAN export their own timesheet, without the rate columns.
+    - The builders re-query rather than sharing each page's query, so a page
+      and its export can drift. Mitigated by calling the same helpers for
+      anything derived (deriveAssignmentStatus, progressLabel) — that is where
+      a divergence would actually matter — but it is a real caveat.
+    - Printing drops the sidebar and controls, keeps status-badge colour
+      (the colour IS the information), repeats table headers across pages, and
+      stamps the date — a printout with no date is indistinguishable from last
+      quarter's a week later.
+
+  - Error, loading and not-found states. There were none anywhere in src/app,
+    so anything that threw gave a blank crash.
+    - 35 boundary files: a root error.tsx, a global-error.tsx for failures in
+      the root layout itself (it reads the session, so an unreachable database
+      lands there), a root not-found.tsx, one error.tsx per route group, a
+      loading.tsx on the dashboard and every report, and not-found.tsx on the
+      dynamic segments that call notFound().
+    - IMPORTANT, and a real break from older Next: the error boundary receives
+      `retry`, NOT `reset`. `retry()` re-fetches and re-renders the segment,
+      which is what a failed query needs; `reset` only clears the error state
+      and tends to fail again immediately. Confirmed in
+      node_modules/next/dist/docs/.../file-conventions/error.md (retry became
+      stable in 16.3.0).
+    - The error message IS shown. This is an internal tool, and "That Tax ID is
+      already in use by another client" is exactly the sentence that tells a
+      colleague what to do next. The digest is shown too, since it is the only
+      handle on a production stack trace. A public app would hide both.
+    - Side effect worth knowing: adding loading.tsx to a page whose guard
+      redirects (e.g. an employee opening /workload) changes the HTTP status
+      from 307 to 200, because the response starts streaming before the
+      redirect happens — this is documented Next behaviour, not a bug. The
+      redirect still fires and NO page data is rendered (verified: the body
+      contains no workload content), but a non-browser client sees a 200.
+
 ## Known gaps / things to be careful about
 - CorpContact.ssnEncrypted is a placeholder field name only: real SSNs must
   never go in there until actual encryption is implemented, so the contact
@@ -512,6 +696,27 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   builder's add/rename/remove/reorder do NOT record events yet. recordAudit is
   a one-liner, so extend it where it matters rather than assuming the log is
   complete.
+- Time entries have no approval or lock step. Anyone can correct their own
+  entries (an admin, anyone's) at any time, including for a period that has
+  already been invoiced. Every edit and delete is audited, but nothing freezes
+  a timesheet — add a lock before this drives real billing.
+- The in-memory rate limiter now also guards the PUBLIC client-request
+  endpoints. That inherits the same caveat as everywhere else (per-process,
+  resets on restart, multiplies by instance count), and here it is the only
+  brake on somebody hammering a link, so it matters more.
+- Client uploads are allow-listed by extension and size but are NOT virus
+  scanned, and the bytes are served back to staff by
+  /api/documents/[id]. Put a scanner in front of the ObjectStore before
+  accepting files from outside the firm at any volume.
+- Nothing emails a mention. TaskCommentMention drives the in-app inbox and the
+  sidebar badge only; somebody who doesn't open the app won't know they were
+  mentioned. sendSystemEmail is the hook if that changes.
+- The export builders re-query rather than sharing each report page's query
+  (see above) — a change to a page's columns won't change its CSV.
+- estimatedMinutes is only seeded onto rows generated AFTER a template
+  estimate is set, like every other template value. Existing open periods keep
+  a null estimate, so the Workload view under-counts until the next rollover
+  or until somebody sets them per task.
 - There is no retention or archival policy for AuditEvent. It grows without
   bound and /activity pages at 100 rows; a firm-sized dataset will eventually
   want pruning or a date-range filter.

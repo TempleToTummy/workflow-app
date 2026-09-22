@@ -63,6 +63,7 @@ export default async function ProjectDetailPage({
     name: tm.subTask.name,
     inUse: stepsInUse.has(tm.subTaskId),
     dueOffsetDays: tm.dueOffsetDays,
+    estimatedMinutes: tm.estimatedMinutes,
     defaultAssigneeId: tm.defaultAssigneeId,
   }));
 
