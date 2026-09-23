@@ -14,7 +14,7 @@ export async function composerClients(user: CurrentUser): Promise<ComposerClient
   const mine = assigneeScope(user);
 
   const clients = await prisma.client.findMany({
-    where: mine ? { activities: { some: { assigneeId: mine } } } : undefined,
+    where: { archivedAt: null, ...(mine ? { activities: { some: { assigneeId: mine } } } : {}) },
     include: {
       contacts: true,
       projectAssignments: {

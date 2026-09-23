@@ -25,6 +25,7 @@ export const ADMIN_GROUPS = [
       { label: "Admin Client Activity", href: "/admin/client-activity" },
       { label: "Accounting Period Information", href: "/admin/accounting-periods" },
       { label: "Work Generation", href: "/admin/scheduler" },
+      { label: "Backup & Restore", href: "/admin/backup" },
     ],
   },
   {
@@ -32,6 +33,7 @@ export const ADMIN_GROUPS = [
     items: [
       { label: "Employees", href: "/admin/employees" },
       { label: "Corporate & Business Type", href: "/admin/business-types" },
+      { label: "Client Tags", href: "/admin/tags" },
     ],
   },
 ];

@@ -5,6 +5,7 @@ import { ReportHeader } from "@/components/report-header";
 
 export default async function ProjectAssignedToClientPage() {
   const assignments = await prisma.projectClientMap.findMany({
+    where: { client: { archivedAt: null } },
     include: { client: true, project: true },
     orderBy: [{ client: { companyName: "asc" } }, { project: { name: "asc" } }],
   });

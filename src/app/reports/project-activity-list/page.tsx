@@ -5,6 +5,7 @@ import { ReportHeader } from "@/components/report-header";
 
 export default async function ProjectActivityListPage() {
   const activities = await prisma.clientActivity.findMany({
+    where: { client: { archivedAt: null } },
     include: { client: true, project: true, subTask: true },
     orderBy: [
       { client: { companyName: "asc" } },

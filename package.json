@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-core-rules.ts && tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts",
+    "test": "tsx scripts/test-core-rules.ts && tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts && tsx scripts/test-organize.ts && tsx scripts/test-bulk.ts && tsx scripts/test-backup.ts",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:backup": "tsx --env-file=.env scripts/backup.ts",
+    "db:restore": "tsx --env-file=.env scripts/restore.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",

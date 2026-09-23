@@ -35,11 +35,11 @@ export default async function ProjectDetailPage({
 
   const [assignments, activities, periods, employees] = await Promise.all([
     prisma.projectClientMap.findMany({
-      where: { projectId, active: true },
+      where: { projectId, active: true, client: { archivedAt: null } },
       include: { client: true },
     }),
     prisma.clientActivity.findMany({
-      where: { projectId },
+      where: { projectId, client: { archivedAt: null } },
       select: {
         clientId: true,
         periodName: true,

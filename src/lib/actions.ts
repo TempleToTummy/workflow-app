@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { canMarkDone } from "@/lib/workflow";
-import { resolveCurrentPeriod, nextPeriodName, getRecurring } from "@/lib/periods";
+import { resolveCurrentPeriod, getRecurring, isPeriodBefore } from "@/lib/periods";
 import { openPeriodForAssignment, generatePeriods } from "@/lib/scheduler";
+import { maybeRollPeriodForward } from "@/lib/rollover";
 import {
   clampOffset,
   resolveStepDueDates,
@@ -104,64 +105,6 @@ export async function updateActivityStatus(
   if (newStatus === "DONE") {
     await maybeRollPeriodForward(activity.clientId, activity.projectId, activity.periodName);
   }
-}
-
-// Mirrors the source app's period-rollover trigger: once every task in the
-// assignment's current period is Done, advance the client's project to the
-// next accounting period and generate that period's (Not Started) task rows.
-// One-time projects (no next period) are marked complete and inactive
-// instead of rolling forward. Internal — the caller is already guarded.
-async function maybeRollPeriodForward(clientId: string, projectId: string, periodName: string) {
-  const assignment = await prisma.projectClientMap.findUnique({
-    where: { clientId_projectId: { clientId, projectId } },
-  });
-  // Already rolled past this period (or the assignment is gone) — nothing to do.
-  if (!assignment || assignment.currentPeriod !== periodName) return;
-
-  const siblings = await prisma.clientActivity.findMany({
-    where: { clientId, projectId, periodName },
-  });
-  if (siblings.length === 0 || !siblings.every((a) => a.status === "DONE")) return;
-
-  const project = await prisma.project.findUniqueOrThrow({
-    where: { id: projectId },
-    include: { recurring: true },
-  });
-  const nextName = nextPeriodName(project.recurring.type, periodName);
-
-  if (!nextName) {
-    await prisma.projectClientMap.update({
-      where: { clientId_projectId: { clientId, projectId } },
-      data: { completedDate: new Date(), active: false },
-    });
-    return;
-  }
-
-  // Finishing early opens the next period early. Row generation goes through
-  // the same helper the scheduler uses, so rows created this way carry the
-  // same resolved due dates as rows the nightly job would have created.
-  await openPeriodForAssignment({
-    clientId,
-    projectId,
-    periodName: nextName,
-    project: {
-      recurringId: project.recurringId,
-      recurring: { type: project.recurring.type },
-      dueOffsetDays: project.dueOffsetDays,
-    },
-    clientOverride: assignment.dueOffsetDays,
-    engagementDefaultAssigneeId: assignment.defaultAssigneeId,
-  });
-
-  await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
-    data: { currentPeriod: nextName, completedDate: new Date() },
-  });
-
-  revalidatePath("/");
-  revalidatePath("/tasks");
-  revalidatePath(`/assignments/${clientId}/${projectId}`);
-  revalidatePath(`/clients/${clientId}`);
 }
 
 export type ClientFormInput = {
@@ -271,24 +214,173 @@ export async function updateClient(clientId: string, data: ClientFormInput) {
   }
 }
 
-// The source app's rule: a client can't be deleted while it has activity or
-// assigned services on file. Contacts cascade-delete with the client (see
-// schema.prisma), everything else has to be cleared first.
-export async function deleteClient(clientId: string) {
-  await requireAdminAction();
-  const [activityCount, assignmentCount] = await Promise.all([
-    prisma.clientActivity.count({ where: { clientId } }),
-    prisma.projectClientMap.count({ where: { clientId } }),
-  ]);
-  if (activityCount > 0 || assignmentCount > 0) {
-    throw new Error(
-      "This client has activity or assigned services on file and can't be deleted."
-    );
-  }
+// --- Archiving and deleting clients ----------------------------------------------
+//
+// Archiving is the normal way to take a client off the books. It's a soft
+// delete: the client disappears from the dashboard, tasks, projects, workload,
+// reports, search and every picker, the scheduler stops opening new periods for
+// it, and any open client-request links stop working — but nothing is removed.
+// Restore brings it all back.
+//
+// Permanent deletion still exists, for a client created by mistake, but only
+// once the client is archived AND has no history at all. It used to be a
+// single guarded call away from any client page; now removing real history
+// takes two deliberate steps and can't happen to a client with work on file.
+
+function revalidateClientLists(clientId: string) {
+  revalidatePath("/");
+  revalidatePath("/tasks");
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/projects");
+  revalidatePath("/workload");
+  revalidatePath("/activity");
+}
+
+export async function archiveClient(clientId: string) {
+  const user = await requireAdminAction();
   const client = await prisma.client.findUnique({
     where: { id: clientId },
-    select: { companyName: true },
+    select: { companyName: true, archivedAt: true },
   });
+  if (!client) throw new Error("That client no longer exists.");
+  if (client.archivedAt) return { cancelledRequests: 0 };
+
+  const label = `${user.firstName} ${user.lastName}`;
+  const [, cancelled] = await prisma.$transaction([
+    prisma.client.update({
+      where: { id: clientId },
+      data: { archivedAt: new Date(), archivedByLabel: label },
+    }),
+    // A client we no longer serve shouldn't be able to keep uploading into
+    // the firm through an old link.
+    prisma.clientRequest.updateMany({
+      where: { clientId, status: "OPEN" },
+      data: { status: "CANCELLED" },
+    }),
+  ]);
+
+  await recordAudit({
+    entityType: "Client",
+    entityId: clientId,
+    action: AUDIT.CLIENT_ARCHIVED,
+    summary: `Archived ${client.companyName}${
+      cancelled.count > 0
+        ? ` — ${cancelled.count} open client request link${cancelled.count === 1 ? "" : "s"} revoked`
+        : ""
+    }`,
+    clientId,
+    contextLabel: client.companyName,
+    actor: actorFrom(user),
+  });
+  revalidateClientLists(clientId);
+  return { cancelledRequests: cancelled.count };
+}
+
+// Restoring resumes the client from TODAY's period. The periods that passed
+// while it was archived are deliberately not generated: the scheduler would
+// otherwise treat six archived months as six months of overdue work and flood
+// the board with checklists nobody was ever meant to do.
+export async function restoreClient(clientId: string) {
+  const user = await requireAdminAction();
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { companyName: true, archivedAt: true },
+  });
+  if (!client) throw new Error("That client no longer exists.");
+  if (!client.archivedAt) return { resumed: 0 };
+
+  await prisma.client.update({
+    where: { id: clientId },
+    data: { archivedAt: null, archivedByLabel: null },
+  });
+
+  const engagements = await prisma.projectClientMap.findMany({
+    where: { clientId, active: true },
+    include: { project: { include: { recurring: true, _count: { select: { subtasks: true } } } } },
+  });
+  let resumed = 0;
+  for (const e of engagements) {
+    const type = e.project.recurring.type;
+    if (type === "ONE_TIME" || e.project._count.subtasks === 0) continue;
+    const today = (await resolveCurrentPeriod(e.project.recurringId, type)).name;
+    if (!e.currentPeriod || !isPeriodBefore(type, e.currentPeriod, today)) continue;
+    await openPeriodForAssignment({
+      clientId,
+      projectId: e.projectId,
+      periodName: today,
+      project: {
+        recurringId: e.project.recurringId,
+        recurring: { type },
+        dueOffsetDays: e.project.dueOffsetDays,
+      },
+      clientOverride: e.dueOffsetDays,
+      engagementDefaultAssigneeId: e.defaultAssigneeId,
+    });
+    await prisma.projectClientMap.update({
+      where: { clientId_projectId: { clientId, projectId: e.projectId } },
+      data: { currentPeriod: today },
+    });
+    resumed += 1;
+  }
+
+  await recordAudit({
+    entityType: "Client",
+    entityId: clientId,
+    action: AUDIT.CLIENT_RESTORED,
+    summary: `Restored ${client.companyName}${
+      resumed > 0
+        ? ` — ${resumed} service${resumed === 1 ? "" : "s"} resumed from the current period`
+        : ""
+    }`,
+    clientId,
+    contextLabel: client.companyName,
+    actor: actorFrom(user),
+  });
+  revalidateClientLists(clientId);
+  return { resumed };
+}
+
+// Permanent. Only for an archived client with nothing on file — the source
+// app's rule (no activity, no assigned services) widened to every kind of
+// history the app now keeps. Contacts and tags cascade with the client.
+export async function deleteClient(clientId: string) {
+  const user = await requireAdminAction();
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { companyName: true, archivedAt: true },
+  });
+  if (!client) throw new Error("That client no longer exists.");
+  if (!client.archivedAt) {
+    throw new Error("Archive the client first. Only an archived client can be deleted permanently.");
+  }
+  const [activity, assignments, documents, time, emails, requests, notes] = await Promise.all([
+    prisma.clientActivity.count({ where: { clientId } }),
+    prisma.projectClientMap.count({ where: { clientId } }),
+    prisma.document.count({ where: { clientId } }),
+    prisma.timeEntry.count({ where: { clientId } }),
+    prisma.emailMessage.count({ where: { clientId } }),
+    prisma.clientRequest.count({ where: { clientId } }),
+    prisma.assignmentNote.count({ where: { clientId } }),
+  ]);
+  const history = [
+    [activity, "task"],
+    [assignments, "service"],
+    [documents, "file"],
+    [time, "time entry", "time entries"],
+    [emails, "email"],
+    [requests, "client request"],
+    [notes, "note"],
+  ] as const;
+  const onFile = history
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => `${n} ${n === 1 ? one : many ?? `${one}s`}`);
+  if (onFile.length > 0) {
+    throw new Error(
+      `This client has history on file (${onFile.join(", ")}), so it stays archived rather than being deleted.`
+    );
+  }
+
   await prisma.client.delete({ where: { id: clientId } });
   // Recorded after the delete and with no foreign key, so the history of a
   // removed client survives the client.
@@ -296,14 +388,13 @@ export async function deleteClient(clientId: string) {
     entityType: "Client",
     entityId: clientId,
     action: AUDIT.CLIENT_DELETED,
-    summary: `Deleted client ${client?.companyName ?? clientId}`,
-    fromValue: client?.companyName ?? null,
+    summary: `Permanently deleted client ${client.companyName}`,
+    fromValue: client.companyName,
     clientId,
-    contextLabel: client?.companyName ?? null,
+    contextLabel: client.companyName,
+    actor: actorFrom(user),
   });
-  revalidatePath("/clients");
-  revalidatePath("/");
-  revalidatePath("/activity");
+  revalidateClientLists(clientId);
 }
 
 // Mirrors the source app's TRG_PROJ_CLIENT_INSERT_SUBTASKS trigger: assigning

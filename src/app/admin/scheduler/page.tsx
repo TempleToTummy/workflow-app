@@ -41,7 +41,8 @@ export default async function SchedulerPage() {
     }),
     lastSuccessfulRun(),
     prisma.projectClientMap.findMany({
-      where: { active: true },
+      // Archived clients are deliberately parked — not a scheduler problem.
+      where: { active: true, client: { archivedAt: null } },
       include: {
         client: { select: { companyName: true } },
         project: { include: { recurring: true, _count: { select: { subtasks: true } } } },

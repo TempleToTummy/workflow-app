@@ -6,10 +6,10 @@ import { ReportHeader } from "@/components/report-header";
 
 export default async function ClientActivityMatrixPage() {
   const [clients, projects, assignments, activities] = await Promise.all([
-    prisma.client.findMany({ orderBy: { companyName: "asc" } }),
+    prisma.client.findMany({ where: { archivedAt: null }, orderBy: { companyName: "asc" } }),
     prisma.project.findMany({ orderBy: { name: "asc" } }),
-    prisma.projectClientMap.findMany({ where: { active: true } }),
-    prisma.clientActivity.findMany(),
+    prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
+    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
 
   const assignmentByPair = new Map(

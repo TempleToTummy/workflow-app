@@ -10,8 +10,8 @@ const STATUSES: ActivityStatus[] = ["NOT_STARTED", "IN_PROGRESS", "AWAITING_REVI
 export default async function ProjectSummaryMatrixPage() {
   const [projects, assignments, activities] = await Promise.all([
     prisma.project.findMany({ orderBy: { name: "asc" } }),
-    prisma.projectClientMap.findMany({ where: { active: true } }),
-    prisma.clientActivity.findMany(),
+    prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
+    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
 
   const rows = projects.map((p) => {

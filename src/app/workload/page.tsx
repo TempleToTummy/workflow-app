@@ -42,7 +42,7 @@ export default async function WorkloadPage() {
       orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     }),
     prisma.clientActivity.findMany({
-      where: { status: { not: "DONE" }, assigneeId: { not: null } },
+      where: { status: { not: "DONE" }, assigneeId: { not: null }, client: { archivedAt: null } },
       select: {
         assigneeId: true,
         status: true,
@@ -54,7 +54,7 @@ export default async function WorkloadPage() {
     // Work nobody is carrying is the other half of the capacity question, and
     // it is invisible in a per-person table by construction.
     prisma.clientActivity.count({
-      where: { status: { not: "DONE" }, assigneeId: null },
+      where: { status: { not: "DONE" }, assigneeId: null, client: { archivedAt: null } },
     }),
   ]);
 

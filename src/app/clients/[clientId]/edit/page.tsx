@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { ClientForm } from "@/components/client-form";
 import { requireUser } from "@/lib/auth";
 import { canAccessClient } from "@/lib/access";
-import { clientGroupNames } from "@/lib/client-groups";
+import { clientGroupNames } from "@/lib/client-options";
 
 export default async function EditClientPage({
   params,

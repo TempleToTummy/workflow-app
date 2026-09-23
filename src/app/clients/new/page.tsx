@@ -2,7 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { ClientForm } from "@/components/client-form";
 import { requireAdmin } from "@/lib/auth";
-import { clientGroupNames } from "@/lib/client-groups";
+import { clientGroupNames } from "@/lib/client-options";
 
 export default async function NewClientPage() {
   // Adding a client to the firm's book is an admin action (src/lib/permissions.ts).

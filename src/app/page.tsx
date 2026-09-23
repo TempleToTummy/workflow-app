@@ -1,12 +1,11 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { StatusBadge } from "@/components/status-badge";
 import { FilterBar } from "@/components/filter-bar";
+import { DashboardTable, type DashboardRow } from "@/components/dashboard-table";
+import { SavedViewsMenu } from "@/components/saved-views-menu";
 import { DueSummaryCards } from "@/components/due-summary-cards";
 import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
 import {
-  formatDueDate,
   dueDateUrgency,
   dueBucket,
   matchesDueFilter,
@@ -15,15 +14,9 @@ import {
 } from "@/lib/dates";
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { ensurePeriodsCurrent } from "@/lib/scheduler";
+import { clientGroupNames, visibleTags, savedViewsFor } from "@/lib/client-options";
+import { matchesClientFilters } from "@/lib/client-filters";
 import type { ActivityStatus } from "@prisma/client";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return parts
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 type View = "all" | "open" | "completed";
 const VIEWS: { id: View; label: string }[] = [
@@ -57,22 +50,31 @@ export default async function DashboardPage({
   const view: View =
     params.view === "open" || params.view === "completed" ? params.view : "all";
 
-  const [assignments, allActivities, periods, clients, employees] = await Promise.all([
+  const [assignments, allActivities, periods, clients, employees, clientGroups, tags, views] = await Promise.all([
     // Every engagement, including ones marked inactive — a finished one-time
-    // project is inactive but still belongs under Completed.
+    // project is inactive but still belongs under Completed. Archived clients
+    // are off the board entirely (they're under Clients → Archived).
     prisma.projectClientMap.findMany({
-      include: { client: true, project: true },
+      where: { client: { archivedAt: null } },
+      include: { client: { include: { tags: { select: { tagId: true } } } }, project: true },
     }),
     prisma.clientActivity.findMany({
+      where: { client: { archivedAt: null } },
       include: { assignee: true, subTask: true },
     }),
     prisma.accountingPeriod.findMany(),
     prisma.client.findMany({
       // The Client chip must not list clients an employee can't see.
-      where: mine ? { activities: { some: { assigneeId: mine } } } : undefined,
+      where: {
+        archivedAt: null,
+        ...(mine ? { activities: { some: { assigneeId: mine } } } : {}),
+      },
       orderBy: { companyName: "asc" },
     }),
     prisma.employee.findMany({ orderBy: { firstName: "asc" } }),
+    clientGroupNames(user),
+    visibleTags(user),
+    savedViewsFor(user, "/"),
   ]);
 
   const periodByName = new Map(periods.map((p) => [p.name, p]));
@@ -131,6 +133,8 @@ export default async function DashboardPage({
           completed,
           href: isCurrent ? base : `${base}?period=${encodeURIComponent(periodName)}`,
           clientName: a.client.companyName,
+          groupName: a.client.groupName,
+          tagIds: a.client.tags.map((t) => t.tagId),
           projectName: a.project.name,
           period: periodName,
           status,
@@ -150,11 +154,13 @@ export default async function DashboardPage({
     .filter((r) => !assigneeFilter || r.assigneeId === assigneeFilter)
     .filter((r) => !projectFilter || r.projectId === projectFilter)
     .filter((r) => !periodFilter || r.period === periodFilter)
+    .filter((r) => matchesClientFilters(r, { group: params.group, tag: params.tag }))
     .filter(
       (r) =>
         !query ||
         r.clientName.toLowerCase().includes(query) ||
-        r.projectName.toLowerCase().includes(query)
+        r.projectName.toLowerCase().includes(query) ||
+        (r.groupName ?? "").toLowerCase().includes(query)
     );
 
   // Chip options come from what's actually on the board, so the Project and
@@ -210,6 +216,23 @@ export default async function DashboardPage({
 
   const firstCompletedIndex = view === "all" ? openRows.length : -1;
 
+  const tableRows: DashboardRow[] = rows.map((r) => ({
+    key: `${r.clientId}:${r.projectId}:${r.periodName}`,
+    clientId: r.clientId,
+    projectId: r.projectId,
+    periodName: r.periodName,
+    href: r.href,
+    clientName: r.clientName,
+    projectName: r.projectName,
+    completed: r.completed,
+    status: r.status,
+    progress: r.progress,
+    progressPct: r.progressPct,
+    dueDate: r.dueDate ? r.dueDate.toISOString() : null,
+    urgency: dueDateUrgency(r.dueDate, r.status),
+    assigneeName: r.assigneeName,
+  }));
+
   return (
     <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <div className="mb-6 flex items-center justify-between">
@@ -222,12 +245,17 @@ export default async function DashboardPage({
             Finished periods stay on the board under Completed.
           </p>
         </div>
-        <Link
-          href="/clients/new"
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
-        >
-          + New Client
-        </Link>
+        <div className="flex items-center gap-2">
+          <SavedViewsMenu path="/" views={views} isAdmin={user.role === "ADMIN"} />
+          {user.role === "ADMIN" && (
+            <Link
+              href="/clients/new"
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
+            >
+              + New Client
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="mb-4 inline-flex rounded-md border border-line bg-surface p-0.5 shadow-sm">
@@ -260,7 +288,7 @@ export default async function DashboardPage({
       <div className="mb-4 rounded-lg border border-line bg-surface px-4 py-3">
         <FilterBar
           search
-          searchPlaceholder="Search by client name or project"
+          searchPlaceholder="Search by client, group or project"
           due
           clients={clients.map((c) => ({ value: c.id, label: c.companyName }))}
           employees={
@@ -270,6 +298,8 @@ export default async function DashboardPage({
           }
           projects={projectOptions}
           periods={periodOptions}
+          groups={clientGroups.map((g) => ({ value: g, label: g }))}
+          tags={tags.map((t) => ({ value: t.id, label: t.name }))}
           trailing={
             <span className="whitespace-nowrap text-sm text-ink-muted">
               {rows.length} {rows.length === 1 ? "project" : "projects"}
@@ -278,105 +308,13 @@ export default async function DashboardPage({
         />
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
-              <th className="px-4 py-3 font-medium">Client</th>
-              <th className="px-4 py-3 font-medium">Project</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Assigned to</th>
-              <th className="px-4 py-3 font-medium">Due</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const urgency = dueDateUrgency(r.dueDate, r.status);
-              const divider =
-                i === firstCompletedIndex && completedRows.length > 0 ? (
-                  <tr key="completed-divider" className="border-b border-line bg-black/[0.03]">
-                    <td colSpan={5} className="px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
-                      Completed · {completedRows.length}
-                    </td>
-                  </tr>
-                ) : null;
-              return (
-                <Fragment key={`${r.clientId}-${r.projectId}-${r.periodName}`}>
-                  {divider}
-                  <tr
-                    className={`border-b border-line last:border-0 hover:bg-black/[0.015] ${
-                      r.completed ? "bg-black/[0.01]" : ""
-                    }`}
-                  >
-                    <td className="px-4 py-4 align-middle">
-                      <Link
-                        href={r.href}
-                        className={`font-medium hover:text-accent ${
-                          r.completed ? "text-ink-muted" : "text-ink"
-                        }`}
-                      >
-                        {r.clientName}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-4 align-middle">
-                      <div className="flex items-center gap-2">
-                        <Link href={r.href} className="text-ink-muted hover:text-accent">
-                          {r.projectName}
-                        </Link>
-                        <span className="tabular rounded-full bg-black/5 px-1.5 py-0.5 text-[10px] text-ink-muted">
-                          {r.period}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex items-center gap-2">
-                        <div className="h-1.5 w-28 overflow-hidden rounded-full bg-line">
-                          <div
-                            className={`h-full rounded-full ${r.completed ? "bg-accent/50" : "bg-accent"}`}
-                            style={{ width: `${r.progressPct}%` }}
-                          />
-                        </div>
-                        <span className="tabular text-[11px] text-ink-muted">{r.progress}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 align-middle">
-                      <StatusBadge status={r.status} />
-                    </td>
-                    <td className="px-4 py-4 align-middle">
-                      <div className="flex items-center gap-2 text-ink-muted">
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-medium text-accent">
-                          {initials(r.assigneeName)}
-                        </span>
-                        {r.assigneeName}
-                      </div>
-                    </td>
-                    <td
-                      className={`px-4 py-4 align-middle tabular ${
-                        r.completed
-                          ? "text-ink-muted"
-                          : urgency === "overdue"
-                          ? "font-medium text-overdue"
-                          : urgency === "soon"
-                          ? "font-medium text-[var(--status-review)]"
-                          : "text-ink-muted"
-                      }`}
-                    >
-                      {formatDueDate(r.dueDate)}
-                    </td>
-                  </tr>
-                </Fragment>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-ink-muted">
-                  {view === "completed"
-                    ? "Nothing completed yet."
-                    : "No work matches these filters."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DashboardTable
+        rows={tableRows}
+        completedCount={completedRows.length}
+        firstCompletedIndex={firstCompletedIndex}
+        emptyMessage={view === "completed" ? "Nothing completed yet." : "No work matches these filters."}
+        employees={employees.map((e) => ({ value: e.id, label: `${e.firstName} ${e.lastName}` }))}
+      />
     </div>
   );
 }

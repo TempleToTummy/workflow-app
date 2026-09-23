@@ -20,8 +20,9 @@ export default async function ProjectsPage() {
       include: { recurring: true, subtasks: true },
       orderBy: { name: "asc" },
     }),
-    prisma.projectClientMap.findMany({ where: { active: true } }),
+    prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
     prisma.clientActivity.findMany({
+      where: { client: { archivedAt: null } },
       select: { projectId: true, clientId: true, periodName: true, status: true },
     }),
   ]);
