@@ -61,12 +61,14 @@ export default async function ProjectsPage() {
             it this period.
           </p>
         </div>
-        <Link
-          href="/projects/new"
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
-        >
-          + New Project
-        </Link>
+        {user.role === "ADMIN" && (
+          <Link
+            href="/projects/new"
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
+          >
+            + New Project
+          </Link>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">

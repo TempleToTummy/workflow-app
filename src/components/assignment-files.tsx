@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import { deleteDocument, uploadDocument } from "@/lib/actions";
 import { formatBytes, formatDate } from "@/lib/dates";
 
-type Employee = { id: string; name: string };
-
 export type FileRow = {
   id: string;
   filename: string;
@@ -20,17 +18,14 @@ export function AssignmentFiles({
   projectId,
   periodName,
   documents,
-  employees,
 }: {
   clientId: string;
   projectId: string;
   periodName: string | null;
   documents: FileRow[];
-  employees: Employee[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  const [uploadedById, setUploadedById] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -46,7 +41,6 @@ export function AssignmentFiles({
       try {
         await uploadDocument(data);
         form.reset();
-        setUploadedById("");
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed.");
@@ -87,20 +81,6 @@ export function AssignmentFiles({
           disabled={isPending}
           className="min-w-0 flex-1 text-sm text-ink file:mr-3 file:rounded-full file:border file:border-line file:bg-surface file:px-3 file:py-1 file:text-xs file:font-medium file:text-ink hover:file:bg-black/5"
         />
-        <select
-          name="uploadedById"
-          value={uploadedById}
-          disabled={isPending}
-          onChange={(e) => setUploadedById(e.target.value)}
-          className="rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
-        >
-          <option value="">Uploader…</option>
-          {employees.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </select>
         <button
           type="submit"
           disabled={isPending}

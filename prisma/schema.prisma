@@ -109,29 +109,39 @@ model EmployeeType {
 // --- People --------------------------------------------------------------
 
 model Client {
-  id             String           @id @default(cuid())
-  companyName    String
-  corpTypeId     String?
-  corpType       CorporationType? @relation(fields: [corpTypeId], references: [id])
-  businessTypeId String?
-  businessType   BusinessType?    @relation(fields: [businessTypeId], references: [id])
-  address1       String?
-  address2       String?
-  city           String?
-  zipcode        String?
-  state          String?
-  phone          String?
-  fax            String?
-  taxId          String?          @unique // was FIN_NO
-  note           String?
-  coRegDate      DateTime?
-  coRegState     String?
-  renewMonth     String?
-  email          String?
-  groupName      String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  companyName     String
+  corpTypeId      String?
+  corpType        CorporationType? @relation(fields: [corpTypeId], references: [id])
+  businessTypeId  String?
+  businessType    BusinessType?    @relation(fields: [businessTypeId], references: [id])
+  address1        String?
+  address2        String?
+  city            String?
+  zipcode         String?
+  state           String?
+  phone           String?
+  fax             String?
+  taxId           String?          @unique // was FIN_NO
+  note            String?
+  coRegDate       DateTime?
+  coRegState      String?
+  renewMonth      String?
+  email           String?
+  // A free-text grouping (a family of related entities, an industry, a
+  // partner's book). Filterable on the dashboard, tasks and clients pages.
+  groupName       String?
+  // Soft delete. An archived client disappears from every working view and
+  // stops generating new periods, but nothing about it is removed — its
+  // history, files and time stay intact and "Restore" brings it all back.
+  // Permanent deletion is only offered for an archived client with no history
+  // at all (see archiveClient / deleteClient in src/lib/actions.ts).
+  archivedAt      DateTime?
+  archivedByLabel String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
+  tags               ClientTag[]
   contacts           CorpContact[]
   projectAssignments ProjectClientMap[]
   activities         ClientActivity[]
@@ -140,6 +150,52 @@ model Client {
   emails             EmailMessage[]
   timeEntries        TimeEntry[]
   clientRequests     ClientRequest[]
+}
+
+// A label on a client ("VIP", "Needs 1099s", "Late payer"). Unlike groupName,
+// a client can carry any number of them.
+model Tag {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  // One of the palette keys in src/lib/tags.ts, not a raw CSS colour, so a
+  // tag can't be given a colour that's unreadable in the UI.
+  color     String      @default("slate")
+  createdAt DateTime    @default(now())
+  clients   ClientTag[]
+}
+
+model ClientTag {
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tagId     String
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([clientId, tagId])
+  @@index([tagId])
+}
+
+// A named filter combination on a list page ("My overdue bookkeeping",
+// "Restaurants due this week"). Stores the URL query string rather than a
+// structured filter, because every list page is already fully URL-driven —
+// a saved view is a bookmark the app knows about. The query is sanitized to
+// the page's own filter keys on save (src/lib/saved-views.ts).
+model SavedView {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     Employee @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  // Which page it belongs to: "/" (dashboard) or "/tasks".
+  path      String
+  query     String
+  // Shared views appear for everyone. Only an admin can share one, so the
+  // team's list can't fill up with everybody's personal filters.
+  shared    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId, path])
+  @@index([path, shared])
 }
 
 model CorpContact {
@@ -203,16 +259,30 @@ model Employee {
   // migrated the same way.
   resetTokenHash      String?   @unique
   resetTokenExpiresAt DateTime?
+
+  // --- Two-factor authentication (TOTP, RFC 6238) ---
+  // The shared secret, encrypted with AUTH_SECRET when that is set (see
+  // src/lib/secret-box.ts). Present but totpEnabledAt null = setup started and
+  // not yet confirmed with a code, which does NOT gate sign-in.
+  totpSecret         String?
+  totpEnabledAt      DateTime?
+  // The last 30-second time step a code was accepted for. A code is refused if
+  // its step is not newer, so a code seen over someone's shoulder can't be
+  // replayed inside its validity window.
+  totpLastUsedStep   Int?
+  // JSON array of SHA-256 hashes of the unused one-time recovery codes.
+  recoveryCodeHashes String?
+
   // Set whenever the password changes (reset, invite acceptance, revoke), so
   // "when did this account last change hands" is answerable.
-  passwordChangedAt   DateTime?
+  passwordChangedAt DateTime?
 
   // Not present in the source schema, added so the dashboard can show
   // who's responsible for a given task.
   assignedActivities  ClientActivity[]
-  completedActivities ClientActivity[]   @relation("ActivityCompletedBy")
-  stepDefaults        ProjectTaskMap[]   @relation("StepDefaultAssignee")
-  engagementDefaults  ProjectClientMap[] @relation("EngagementDefaultAssignee")
+  completedActivities ClientActivity[]     @relation("ActivityCompletedBy")
+  stepDefaults        ProjectTaskMap[]     @relation("StepDefaultAssignee")
+  engagementDefaults  ProjectClientMap[]   @relation("EngagementDefaultAssignee")
   uploadedDocuments   Document[]
   authoredNotes       AssignmentNote[]
   sentEmails          EmailMessage[]
@@ -220,6 +290,8 @@ model Employee {
   comments            TaskComment[]
   mentions            TaskCommentMention[]
   requestedFromClient ClientRequest[]      @relation("ClientRequestCreatedBy")
+  savedViews          SavedView[]
+  loginChallenges     LoginChallenge[]
 }
 
 // A logged-in session. The cookie (wf_session) holds this row's id verbatim —
@@ -230,6 +302,27 @@ model Session {
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  // What the Account page shows so a person can recognise their own devices
+  // and end the ones they don't. lastSeenAt is refreshed at most every few
+  // minutes (src/lib/auth.ts), not on every request.
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+  ipAddress  String?
+
+  @@index([employeeId])
+}
+
+// The half-finished sign-in between "password correct" and "2FA code
+// correct". The browser holds the raw token in a short-lived httpOnly cookie;
+// only its SHA-256 is stored, the same as reset tokens. Deliberately not a
+// Session: nothing that checks for a session will ever accept one of these.
+model LoginChallenge {
+  id         String   @id // SHA-256 of the cookie value
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  attempts   Int      @default(0)
   createdAt  DateTime @default(now())
 
   @@index([employeeId])
@@ -445,26 +538,26 @@ model AssignmentNote {
 // <bucket>/<storageKey>; swapping in a Supabase Storage backed ObjectStore
 // later needs no schema change.
 model Document {
-  id           String    @id @default(cuid())
-  clientId     String
-  client       Client    @relation(fields: [clientId], references: [id])
-  projectId    String
-  project      Project   @relation(fields: [projectId], references: [id])
-  periodName   String? // which accounting period it belongs to, if any
-  filename     String // original upload name, shown in the UI
-  mimeType     String
-  size         Int // bytes
-  bucket       String    @default("workflow-files")
-  storageKey   String    @unique
-  uploadedById String?
-  uploadedBy   Employee? @relation(fields: [uploadedById], references: [id])
+  id              String         @id @default(cuid())
+  clientId        String
+  client          Client         @relation(fields: [clientId], references: [id])
+  projectId       String
+  project         Project        @relation(fields: [projectId], references: [id])
+  periodName      String? // which accounting period it belongs to, if any
+  filename        String // original upload name, shown in the UI
+  mimeType        String
+  size            Int // bytes
+  bucket          String         @default("workflow-files")
+  storageKey      String         @unique
+  uploadedById    String?
+  uploadedBy      Employee?      @relation(fields: [uploadedById], references: [id])
   // Set when the CLIENT uploaded this through a tokenized request link rather
   // than a member of staff through the Files tab. uploadedById is null in that
   // case (no employee did it), so this is what distinguishes "nobody recorded
   // who uploaded it" from "the client uploaded it themselves".
   clientRequestId String?
   clientRequest   ClientRequest? @relation(fields: [clientRequestId], references: [id], onDelete: SetNull)
-  createdAt    DateTime  @default(now())
+  createdAt       DateTime       @default(now())
 
   @@index([clientId, projectId])
   @@index([clientRequestId])
@@ -665,9 +758,9 @@ model TimeEntry {
   // Engagement context. Kept even when the activity is gone, which is why
   // these are their own columns and activityId is nullable.
   clientId   String?
-  client     Client?  @relation(fields: [clientId], references: [id])
+  client     Client?         @relation(fields: [clientId], references: [id])
   projectId  String?
-  project    Project? @relation(fields: [projectId], references: [id])
+  project    Project?        @relation(fields: [projectId], references: [id])
   periodName String?
   // The specific checklist step the time was booked against, when there is
   // one. SetNull rather than Cascade: deleting a task must not delete the
@@ -684,12 +777,12 @@ model TimeEntry {
   // Non-billable time is still time — internal admin, training, write-offs —
   // and realization is precisely billable hours over total hours, so both have
   // to be recorded rather than one of them being dropped.
-  billable  Boolean   @default(true)
-  note      String?
+  billable     Boolean @default(true)
+  note         String?
   // "timer" | "manual". A timer's start and end are wall-clock facts; a manual
   // entry's are a human's recollection, and telling them apart matters when a
   // timesheet is questioned.
-  source    String    @default("timer")
+  source       String  @default("timer")
   // The employee's hourlyRate at the moment this was logged. Null when no rate
   // was set — the rollups then report hours and leave the amount blank.
   rateSnapshot Float?
@@ -734,12 +827,12 @@ model TaskComment {
   // SetNull, not Cascade: a departed employee's handoff note is often the only
   // record of why something was done, so it outlives their account. The UI
   // falls back to authorLabel.
-  authorId String?
-  author   Employee? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorId    String?
+  author      Employee? @relation(fields: [authorId], references: [id], onDelete: SetNull)
   // Denormalized author name, for the same reason AuditEvent carries one.
   authorLabel String
 
-  body String
+  body     String
   // Set when the body is edited, so a comment somebody changed after the fact
   // is visibly changed rather than quietly rewritten.
   editedAt DateTime?
@@ -798,11 +891,11 @@ model TaskCommentMention {
 //     does is remove the waiting and the chasing, which was the actual
 //     problem.
 model ClientRequest {
-  id        String  @id @default(cuid())
-  clientId  String
-  client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id         String          @id @default(cuid())
+  clientId   String
+  client     Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  projectId  String
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // Which accounting period the request is about, so a document the client
   // sends lands in the right period's Files tab.
   periodName String?
@@ -823,13 +916,13 @@ model ClientRequest {
   tokenHash String   @unique
   expiresAt DateTime
 
-  createdById String?
-  createdBy   Employee? @relation("ClientRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById    String?
+  createdBy      Employee? @relation("ClientRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   // Denormalized, so "who asked for this" survives the asker leaving.
   createdByLabel String
 
   // --- The client's response ---
-  completedAt DateTime?
+  completedAt     DateTime?
   // Free text the responder typed as their name. Deliberately NOT treated as
   // identity: the token is the only authentication here, and this field is a
   // courtesy label, which is why it is never used for authorization.
@@ -841,7 +934,7 @@ model ClientRequest {
 
   // How many times the link has been opened, and when it last was. Enough to
   // answer "did they even look at it" before someone picks up the phone.
-  viewCount  Int       @default(0)
+  viewCount    Int       @default(0)
   lastViewedAt DateTime?
 
   documents Document[]

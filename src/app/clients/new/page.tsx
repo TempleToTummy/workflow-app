@@ -1,17 +1,20 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { ClientForm } from "@/components/client-form";
-import { requireUser } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
+import { clientGroupNames } from "@/lib/client-groups";
 
 export default async function NewClientPage() {
-  await requireUser();
-  const [corpTypes, businessTypes, projects] = await Promise.all([
+  // Adding a client to the firm's book is an admin action (src/lib/permissions.ts).
+  const user = await requireAdmin();
+  const [corpTypes, businessTypes, projects, groups] = await Promise.all([
     prisma.corporationType.findMany({ orderBy: { name: "asc" } }),
     prisma.businessType.findMany({ orderBy: { name: "asc" } }),
     prisma.project.findMany({
       include: { recurring: true, subtasks: true },
       orderBy: { name: "asc" },
     }),
+    clientGroupNames(user),
   ]);
 
   const services = projects.map((p) => ({
@@ -34,6 +37,7 @@ export default async function NewClientPage() {
         corpTypes={corpTypes}
         businessTypes={businessTypes}
         services={services}
+        groupSuggestions={groups}
       />
     </div>
   );

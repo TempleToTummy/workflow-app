@@ -9,13 +9,14 @@ import {
 } from "@/lib/actions";
 import { formatDate } from "@/lib/dates";
 
-type Employee = { id: string; name: string };
-
 export type NoteRow = {
   id: string;
   body: string;
   authorName: string | null;
   createdAt: string;
+  // Only the author (or an admin) may change a note; the server enforces it
+  // and this just keeps the buttons away from people they'd fail for.
+  canEdit: boolean;
 };
 
 const textareaClass =
@@ -25,16 +26,13 @@ export function AssignmentNotes({
   clientId,
   projectId,
   notes,
-  employees,
 }: {
   clientId: string;
   projectId: string;
   notes: NoteRow[];
-  employees: Employee[];
 }) {
   const router = useRouter();
   const [body, setBody] = useState("");
-  const [authorId, setAuthorId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -44,12 +42,8 @@ export function AssignmentNotes({
     setError(null);
     startTransition(async () => {
       try {
-        await addAssignmentNote(clientId, projectId, {
-          body: trimmed,
-          authorId: authorId || undefined,
-        });
+        await addAssignmentNote(clientId, projectId, { body: trimmed });
         setBody("");
-        setAuthorId("");
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't add note.");
@@ -73,19 +67,7 @@ export function AssignmentNotes({
           className={textareaClass}
         />
         <div className="mt-2 flex items-center justify-between gap-2">
-          <select
-            value={authorId}
-            disabled={isPending}
-            onChange={(e) => setAuthorId(e.target.value)}
-            className="rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
-          >
-            <option value="">Author…</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
+          <span className="text-xs text-ink-muted">Posted under your name.</span>
           <button
             type="button"
             onClick={handleAdd}
@@ -152,29 +134,31 @@ function NoteItem({ note }: { note: NoteRow }) {
         <span>
           {note.authorName ?? "—"} · {formatDate(note.createdAt)}
         </span>
-        <span className="flex items-center gap-2">
-          {!editing && (
+        {note.canEdit && (
+          <span className="flex items-center gap-2">
+            {!editing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(note.body);
+                  setEditing(true);
+                }}
+                className="hover:text-accent"
+              >
+                Edit
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => {
-                setDraft(note.body);
-                setEditing(true);
-              }}
-              className="hover:text-accent"
+              onClick={handleDelete}
+              disabled={isPending}
+              aria-label="Delete note"
+              className="hover:text-overdue disabled:opacity-50"
             >
-              Edit
+              ×
             </button>
-          )}
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={isPending}
-            aria-label="Delete note"
-            className="hover:text-overdue disabled:opacity-50"
-          >
-            ×
-          </button>
-        </span>
+          </span>
+        )}
       </div>
 
       {editing ? (

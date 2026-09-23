@@ -16,20 +16,31 @@ import { resolveDefaultAssignees } from "@/lib/default-assignees";
 import { formatMinutes } from "@/lib/time";
 import { recordAudit, recordAuditMany, actorFrom, AUDIT, STATUS_WORDS } from "@/lib/audit";
 import { objectStore, documentStorageKey, DEFAULT_BUCKET } from "@/lib/storage";
-import { requireUser, requireAdmin } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
+import {
+  requireActivityAccess,
+  requireAdminAction,
+  requireClientAccess,
+  requireEngagementAccess,
+  assertEmployeeExists,
+} from "@/lib/access";
 import { newToken, inviteExpiry } from "@/lib/password";
 import type { ActivityStatus, RecurringType, Role, SubtaskKind } from "@prisma/client";
 
 // Every action guards itself — server actions are reachable by direct POST, not
-// just through the UI, and proxy.ts only checks for a cookie. requireUser() =
-// any signed-in employee; requireAdmin() = ADMIN role (config + user
-// management). Both redirect to /login (or /) when the check fails.
+// just through the UI, and proxy.ts only checks for a cookie. The rules are in
+// src/lib/permissions.ts and enforced by src/lib/access.ts:
+//   requireActivityAccess / requireEngagementAccess — work on an engagement the
+//     caller is assigned to (admins: any).
+//   requireClientAccess — edit a client the caller works with.
+//   requireAdminAction — firm structure (clients, services, templates); throws.
+//   requireAdmin — the older admin gate for config + user management; redirects.
 
 export async function updateActivityStatus(
   activityId: string,
   newStatus: ActivityStatus
 ) {
-  const user = await requireUser();
+  const { user } = await requireActivityAccess(activityId);
   const activity = await prisma.clientActivity.findUniqueOrThrow({
     where: { id: activityId },
     include: {
@@ -214,7 +225,7 @@ function rethrowFriendly(
 }
 
 export async function createClient(data: ClientFormInput) {
-  await requireUser();
+  await requireAdminAction();
   const values = normalizeClientInput(data);
   try {
     const client = await prisma.client.create({ data: values });
@@ -236,7 +247,7 @@ export async function createClient(data: ClientFormInput) {
 }
 
 export async function updateClient(clientId: string, data: ClientFormInput) {
-  await requireUser();
+  await requireClientAccess(clientId);
   const values = normalizeClientInput(data);
   try {
     const client = await prisma.client.update({
@@ -264,7 +275,7 @@ export async function updateClient(clientId: string, data: ClientFormInput) {
 // assigned services on file. Contacts cascade-delete with the client (see
 // schema.prisma), everything else has to be cleared first.
 export async function deleteClient(clientId: string) {
-  await requireUser();
+  await requireAdminAction();
   const [activityCount, assignmentCount] = await Promise.all([
     prisma.clientActivity.count({ where: { clientId } }),
     prisma.projectClientMap.count({ where: { clientId } }),
@@ -305,7 +316,7 @@ export async function assignProjectToClient(
   projectId: string,
   periodName?: string
 ) {
-  await requireUser();
+  await requireAdminAction();
   const existing = await prisma.projectClientMap.findUnique({
     where: { clientId_projectId: { clientId, projectId } },
   });
@@ -413,7 +424,7 @@ function normalizeContactInput(data: ContactInput) {
 }
 
 export async function createContact(clientId: string, data: ContactInput) {
-  await requireUser();
+  await requireClientAccess(clientId);
   const values = normalizeContactInput(data);
   const contact = await prisma.corpContact.create({ data: { clientId, ...values } });
   revalidatePath(`/clients/${clientId}`);
@@ -421,8 +432,19 @@ export async function createContact(clientId: string, data: ContactInput) {
   return contact;
 }
 
+// A contact id alone says nothing about access, so resolve it to its client
+// first and check that.
+async function requireContactAccess(contactId: string) {
+  const contact = await prisma.corpContact.findUnique({
+    where: { id: contactId },
+    select: { clientId: true },
+  });
+  if (!contact) throw new Error("That contact no longer exists.");
+  await requireClientAccess(contact.clientId);
+}
+
 export async function updateContact(contactId: string, data: ContactInput) {
-  await requireUser();
+  await requireContactAccess(contactId);
   const values = normalizeContactInput(data);
   const contact = await prisma.corpContact.update({ where: { id: contactId }, data: values });
   revalidatePath(`/clients/${contact.clientId}`);
@@ -430,7 +452,7 @@ export async function updateContact(contactId: string, data: ContactInput) {
 }
 
 export async function deleteContact(contactId: string) {
-  await requireUser();
+  await requireContactAccess(contactId);
   const contact = await prisma.corpContact.delete({ where: { id: contactId } });
   revalidatePath(`/clients/${contact.clientId}`);
 }
@@ -556,8 +578,8 @@ export async function updateEmployee(employeeId: string, data: EmployeeFormInput
     await recordAudit({
       entityType: "Employee",
       entityId: employee.id,
-      action: AUDIT.EMPLOYEE_CREATED,
-      summary: `Added ${employee.firstName} ${employee.lastName} (${employee.email}) and issued an invite`,
+      action: AUDIT.EMPLOYEE_UPDATED,
+      summary: `Updated ${employee.firstName} ${employee.lastName}'s details`,
       toValue: employee.email,
       contextLabel: `${employee.firstName} ${employee.lastName}`,
     });
@@ -833,12 +855,15 @@ export async function removeProjectTaskMap(projectId: string, subTaskId: string)
   revalidatePath("/clients/new");
 }
 
-// --- Project builder (any signed-in user) -----------------------------------
+// --- Project builder (admin) --------------------------------------------------
 //
 // The admin catalog above is the firm's fixed service list. This section is
-// the FinancialCents-style flow: any employee can create their own project
-// and build its checklist directly on /projects/[id] — add a task, rename it,
-// drag it into place, remove it. Each task here is a ProjectSubTask + a
+// the FinancialCents-style flow: create a project and build its checklist
+// directly on /projects/[id] — add a task, rename it, drag it into place,
+// remove it. It used to be open to any employee, but a template edit changes
+// the work of every client on the service (including clients the editor can't
+// see), and an employee who created a project was immediately redirected away
+// from it by the visibility scope anyway. Employees see the page read-only. Each task here is a ProjectSubTask + a
 // ProjectTaskMap row on this project, so everything downstream (assigning
 // clients, period rollover, admin pages) keeps working unchanged.
 //
@@ -860,7 +885,7 @@ function revalidateProjectBuilder(projectId: string) {
 const SEQUENCE_STEP = 10;
 
 export async function createOwnProject(data: ProjectFormInput) {
-  await requireUser();
+  await requireAdminAction();
   const name = data.name.trim();
   if (!name) throw new Error("Project name is required.");
   const recurring = await getRecurring(data.recurring);
@@ -881,7 +906,7 @@ export async function createOwnProject(data: ProjectFormInput) {
 }
 
 export async function addChecklistTask(projectId: string, name: string) {
-  await requireUser();
+  await requireAdminAction();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Task name is required.");
   await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
@@ -903,7 +928,7 @@ export async function addChecklistTask(projectId: string, name: string) {
 }
 
 export async function renameChecklistTask(projectId: string, subTaskId: string, name: string) {
-  await requireUser();
+  await requireAdminAction();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Task name is required.");
 
@@ -920,7 +945,7 @@ export async function renameChecklistTask(projectId: string, subTaskId: string, 
 }
 
 export async function removeChecklistTask(projectId: string, subTaskId: string) {
-  await requireUser();
+  await requireAdminAction();
   const inUse = await prisma.clientActivity.count({ where: { projectId, subTaskId } });
   if (inUse > 0) {
     throw new Error("Clients already have activity on this step, so it can't be removed.");
@@ -954,7 +979,7 @@ export async function removeChecklistTask(projectId: string, subTaskId: string) 
 // exactly the steps currently on the project — this guards against a stale
 // drag committing over a concurrent add/remove.
 export async function reorderChecklist(projectId: string, orderedSubTaskIds: string[]) {
-  await requireUser();
+  await requireAdminAction();
   const current = await prisma.projectTaskMap.findMany({ where: { projectId } });
   const currentIds = new Set(current.map((tm) => tm.subTaskId));
   const sameSet =
@@ -1045,13 +1070,9 @@ export async function addActivitySubtask(
   activityId: string,
   data: { name: string; kind: SubtaskKind }
 ) {
-  await requireUser();
+  const { activity } = await requireActivityAccess(activityId);
   const name = data.name.trim();
   if (!name) throw new Error("Subtask name is required.");
-  const activity = await prisma.clientActivity.findUniqueOrThrow({
-    where: { id: activityId },
-    select: { clientId: true, projectId: true },
-  });
   const last = await prisma.activitySubtask.findFirst({
     where: { activityId },
     orderBy: { sequence: "desc" },
@@ -1064,8 +1085,18 @@ export async function addActivitySubtask(
   return created;
 }
 
+// Subtask ids resolve to their parent step, which is what access is judged on.
+async function requireSubtaskAccess(id: string) {
+  const subtask = await prisma.activitySubtask.findUnique({
+    where: { id },
+    select: { activityId: true },
+  });
+  if (!subtask) throw new Error("That subtask no longer exists.");
+  await requireActivityAccess(subtask.activityId);
+}
+
 export async function toggleActivitySubtask(id: string, done: boolean) {
-  await requireUser();
+  await requireSubtaskAccess(id);
   const updated = await prisma.activitySubtask.update({
     where: { id },
     data: { done },
@@ -1075,7 +1106,7 @@ export async function toggleActivitySubtask(id: string, done: boolean) {
 }
 
 export async function renameActivitySubtask(id: string, name: string) {
-  await requireUser();
+  await requireSubtaskAccess(id);
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Subtask name is required.");
   const updated = await prisma.activitySubtask.update({
@@ -1087,7 +1118,7 @@ export async function renameActivitySubtask(id: string, name: string) {
 }
 
 export async function deleteActivitySubtask(id: string) {
-  await requireUser();
+  await requireSubtaskAccess(id);
   const deleted = await prisma.activitySubtask.delete({
     where: { id },
     include: { activity: { select: { clientId: true, projectId: true } } },
@@ -1098,7 +1129,8 @@ export async function deleteActivitySubtask(id: string) {
 // One assignee per step (unchanged model). This is the inline per-row control;
 // bulkAssignActivities below is the Assignees panel.
 export async function setActivityAssignee(activityId: string, employeeId: string) {
-  const user = await requireUser();
+  const { user } = await requireActivityAccess(activityId);
+  await assertEmployeeExists(employeeId || null);
   const before = await prisma.clientActivity.findUniqueOrThrow({
     where: { id: activityId },
     include: { subTask: { select: { name: true } }, assignee: true },
@@ -1148,8 +1180,9 @@ export async function bulkAssignActivities(
   employeeId: string,
   target: BulkAssignTarget
 ): Promise<number> {
-  await requireUser();
+  const user = await requireEngagementAccess(clientId, projectId);
   const assigneeId = employeeId || null;
+  await assertEmployeeExists(assigneeId);
   const base = { clientId, projectId, periodName };
 
   const where =
@@ -1183,6 +1216,7 @@ export async function bulkAssignActivities(
       clientId,
       projectId,
       periodName,
+      actor: actorFrom(user),
     }))
   );
 
@@ -1195,18 +1229,35 @@ export async function addAssignmentNote(
   projectId: string,
   data: { body: string; authorId?: string }
 ) {
-  await requireUser();
+  const user = await requireEngagementAccess(clientId, projectId);
   const body = data.body.trim();
   if (!body) throw new Error("Note can't be empty.");
+  // The author is whoever is signed in. It used to be taken from the request,
+  // which let anyone post a note under a colleague's name.
   const created = await prisma.assignmentNote.create({
-    data: { clientId, projectId, body, authorId: data.authorId?.trim() || null },
+    data: { clientId, projectId, body, authorId: user.id },
   });
   revalidateAssignment(clientId, projectId);
   return created;
 }
 
+// Notes are a shared log, so only the person who wrote one (or an admin) may
+// change or remove it — the same rule task comments follow. A note with no
+// recorded author predates that and is admin-only.
+async function requireNoteOwnership(id: string) {
+  const note = await prisma.assignmentNote.findUnique({
+    where: { id },
+    select: { clientId: true, projectId: true, authorId: true },
+  });
+  if (!note) throw new Error("That note no longer exists.");
+  const user = await requireEngagementAccess(note.clientId, note.projectId);
+  if (user.role !== "ADMIN" && note.authorId !== user.id) {
+    throw new Error("Only the person who wrote a note (or an admin) can change it.");
+  }
+}
+
 export async function updateAssignmentNote(id: string, data: { body: string }) {
-  await requireUser();
+  await requireNoteOwnership(id);
   const body = data.body.trim();
   if (!body) throw new Error("Note can't be empty.");
   const updated = await prisma.assignmentNote.update({ where: { id }, data: { body } });
@@ -1214,7 +1265,7 @@ export async function updateAssignmentNote(id: string, data: { body: string }) {
 }
 
 export async function deleteAssignmentNote(id: string) {
-  await requireUser();
+  await requireNoteOwnership(id);
   const deleted = await prisma.assignmentNote.delete({ where: { id } });
   revalidateAssignment(deleted.clientId, deleted.projectId);
 }
@@ -1225,14 +1276,15 @@ export async function deleteAssignmentNote(id: string) {
 // key, and the bytes are written before the row so a failure can never leave a
 // Document pointing at nothing.
 export async function uploadDocument(formData: FormData) {
-  await requireUser();
   const clientId = String(formData.get("clientId") ?? "");
   const projectId = String(formData.get("projectId") ?? "");
   const periodName = String(formData.get("periodName") ?? "") || null;
-  const uploadedById = String(formData.get("uploadedById") ?? "") || null;
   const file = formData.get("file");
 
   if (!clientId || !projectId) throw new Error("Missing engagement reference.");
+  const user = await requireEngagementAccess(clientId, projectId);
+  // Recorded from the session, not the form — see addAssignmentNote.
+  const uploadedById = user.id;
   if (!(file instanceof File) || file.size === 0) {
     throw new Error("Choose a file to upload.");
   }
@@ -1267,7 +1319,12 @@ export async function uploadDocument(formData: FormData) {
 }
 
 export async function deleteDocument(id: string) {
-  await requireUser();
+  const existing = await prisma.document.findUnique({
+    where: { id },
+    select: { clientId: true, projectId: true },
+  });
+  if (!existing) throw new Error("That file no longer exists.");
+  await requireEngagementAccess(existing.clientId, existing.projectId);
   const doc = await prisma.document.delete({ where: { id } });
   await objectStore.remove(doc.bucket, doc.storageKey).catch(() => {});
   revalidateAssignment(doc.clientId, doc.projectId);
@@ -1284,7 +1341,9 @@ export async function deleteDocument(id: string) {
 // extension typed in for one client must survive someone editing the
 // service's rule.
 
-export async function recomputeDueDates(scope: {
+// Internal: NOT exported. Every export of a "use server" module is a public
+// POST endpoint, and this one used to be callable by anyone signed in.
+async function recomputeDueDates(scope: {
   projectId: string;
   clientId?: string;
 }): Promise<number> {
@@ -1375,7 +1434,7 @@ function assertOffsetInRange(value: number) {
 // The service-level rule, editable straight from the project page (the admin
 // project form writes the same field through updateProject).
 export async function setProjectDueRule(projectId: string, offsetDays: number) {
-  await requireUser();
+  await requireAdminAction();
   assertOffsetInRange(offsetDays);
   await prisma.project.update({
     where: { id: projectId },
@@ -1397,7 +1456,7 @@ export async function setChecklistTaskDueOffset(
   subTaskId: string,
   offsetDays: number | null
 ) {
-  await requireUser();
+  await requireAdminAction();
   if (offsetDays !== null) assertOffsetInRange(offsetDays);
   await prisma.projectTaskMap.update({
     where: { projectId_subTaskId: { projectId, subTaskId } },
@@ -1416,7 +1475,7 @@ export async function setAssignmentDueOffset(
   projectId: string,
   offsetDays: number | null
 ) {
-  await requireUser();
+  await requireEngagementAccess(clientId, projectId);
   if (offsetDays !== null) assertOffsetInRange(offsetDays);
   await prisma.projectClientMap.update({
     where: { clientId_projectId: { clientId, projectId } },
@@ -1434,11 +1493,7 @@ export async function setAssignmentDueOffset(
 // later rule change doesn't silently undo it. Passing null clears the override
 // and hands the row back to the rules.
 export async function setActivityDueDate(activityId: string, date: string | null) {
-  await requireUser();
-  const activity = await prisma.clientActivity.findUniqueOrThrow({
-    where: { id: activityId },
-    select: { clientId: true, projectId: true },
-  });
+  const { user, activity } = await requireActivityAccess(activityId);
 
   if (date === null || date.trim() === "") {
     await prisma.clientActivity.update({
@@ -1469,6 +1524,8 @@ export async function setActivityDueDate(activityId: string, date: string | null
     toValue: date || null,
     clientId: activity.clientId,
     projectId: activity.projectId,
+    periodName: activity.periodName,
+    actor: actorFrom(user),
   });
 
   revalidatePath("/");
@@ -1504,7 +1561,8 @@ export async function setStepDefaultAssignee(
   subTaskId: string,
   employeeId: string | null
 ) {
-  const user = await requireUser();
+  const user = await requireAdminAction();
+  await assertEmployeeExists(employeeId || null);
   const [taskMap, project] = await Promise.all([
     prisma.projectTaskMap.findUniqueOrThrow({
       where: { projectId_subTaskId: { projectId, subTaskId } },
@@ -1545,7 +1603,8 @@ export async function setEngagementDefaultAssignee(
   projectId: string,
   employeeId: string | null
 ) {
-  const user = await requireUser();
+  const user = await requireEngagementAccess(clientId, projectId);
+  await assertEmployeeExists(employeeId || null);
   const assignment = await prisma.projectClientMap.findUniqueOrThrow({
     where: { clientId_projectId: { clientId, projectId } },
     include: { defaultAssignee: true, client: true, project: true },
@@ -1588,7 +1647,7 @@ export async function applyDefaultAssignees(
   projectId: string,
   periodName: string
 ): Promise<number> {
-  const user = await requireUser();
+  const user = await requireEngagementAccess(clientId, projectId);
 
   const [assignment, taskMaps, unassigned] = await Promise.all([
     prisma.projectClientMap.findUniqueOrThrow({
@@ -1693,7 +1752,7 @@ export async function setChecklistTaskEstimate(
   subTaskId: string,
   minutes: number | null
 ) {
-  const user = await requireUser();
+  const user = await requireAdminAction();
   const value = clampEstimate(minutes);
 
   const [taskMap, project] = await Promise.all([
@@ -1730,7 +1789,7 @@ export async function setChecklistTaskEstimate(
 
 // The per-task layer, edited inline on the assignment checklist.
 export async function setActivityEstimate(activityId: string, minutes: number | null) {
-  const user = await requireUser();
+  const { user } = await requireActivityAccess(activityId);
   const value = clampEstimate(minutes);
 
   const before = await prisma.clientActivity.findUniqueOrThrow({

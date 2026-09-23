@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { ProjectCreateForm } from "@/components/project-create-form";
 
 export default async function NewProjectPage() {
-  await requireUser();
+  // Service templates are firm structure — admin only (src/lib/permissions.ts).
+  await requireAdmin();
 
   return (
     <div className="mx-auto w-full max-w-2xl px-8 py-8">

@@ -7,7 +7,8 @@ import { formatDueDate, dueDateUrgency } from "@/lib/dates";
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { ProjectChecklistBuilder } from "@/components/project-checklist-builder";
 import { ProjectDueRule } from "@/components/project-due-rule";
-import { describeDueRule } from "@/lib/due-dates";
+import { describeDueRule, describeStepOffset } from "@/lib/due-dates";
+import { formatMinutes } from "@/lib/time";
 
 export default async function ProjectDetailPage({
   params,
@@ -120,24 +121,68 @@ export default async function ProjectDetailPage({
         </p>
       </div>
 
-      <div className="mb-6">
-        <ProjectDueRule
-          projectId={projectId}
-          recurring={project.recurring.type}
-          dueOffsetDays={project.dueOffsetDays}
-        />
-      </div>
+      {user.role === "ADMIN" ? (
+        <>
+          <div className="mb-6">
+            <ProjectDueRule
+              projectId={projectId}
+              recurring={project.recurring.type}
+              dueOffsetDays={project.dueOffsetDays}
+            />
+          </div>
 
-      <div className="mb-8">
-        <ProjectChecklistBuilder
-          projectId={projectId}
-          tasks={checklist}
-          employees={employees.map((e) => ({
-            id: e.id,
-            name: `${e.firstName} ${e.lastName}`,
-          }))}
-        />
-      </div>
+          <div className="mb-8">
+            <ProjectChecklistBuilder
+              projectId={projectId}
+              tasks={checklist}
+              employees={employees.map((e) => ({
+                id: e.id,
+                name: `${e.firstName} ${e.lastName}`,
+              }))}
+            />
+          </div>
+        </>
+      ) : (
+        // Employees see the template but can't change it: an edit here changes
+        // every client on the service, including ones they don't work with.
+        <div className="mb-8 rounded-lg border border-line bg-surface shadow-sm">
+          <div className="flex items-center justify-between border-b border-line px-4 py-3">
+            <h2 className="text-sm font-semibold text-ink">Checklist</h2>
+            <span className="text-xs text-ink-muted">
+              Read-only · an admin maintains service templates
+            </span>
+          </div>
+          <ol className="divide-y divide-line">
+            {checklist.map((t, i) => {
+              const owner = employees.find((e) => e.id === t.defaultAssigneeId);
+              return (
+                <li key={t.subTaskId} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
+                  <span className="tabular w-6 text-ink-muted">{i + 1}.</span>
+                  <span className="flex-1 text-ink">{t.name}</span>
+                  {t.dueOffsetDays !== null && (
+                    <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs text-ink-muted">
+                      {describeStepOffset(t.dueOffsetDays)}
+                    </span>
+                  )}
+                  {t.estimatedMinutes !== null && (
+                    <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs text-ink-muted">
+                      est. {formatMinutes(t.estimatedMinutes)}
+                    </span>
+                  )}
+                  {owner && (
+                    <span className="text-xs text-ink-muted">
+                      Owner: {owner.firstName} {owner.lastName}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+            {checklist.length === 0 && (
+              <li className="px-4 py-6 text-center text-sm text-ink-muted">No steps yet.</li>
+            )}
+          </ol>
+        </div>
+      )}
 
       <h2 className="mb-3 text-sm font-semibold text-ink">Clients on this project</h2>
       <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">

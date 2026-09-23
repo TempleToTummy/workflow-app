@@ -1,18 +1,23 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { ClientForm } from "@/components/client-form";
 import { requireUser } from "@/lib/auth";
+import { canAccessClient } from "@/lib/access";
+import { clientGroupNames } from "@/lib/client-groups";
 
 export default async function EditClientPage({
   params,
 }: {
   params: Promise<{ clientId: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const { clientId } = await params;
+  // The same gate as the client's detail page. This page used to have none, so
+  // any signed-in employee could open any client's details by URL.
+  if (!(await canAccessClient(user, clientId))) redirect("/clients");
 
-  const [client, corpTypes, businessTypes, projects] = await Promise.all([
+  const [client, corpTypes, businessTypes, projects, groups] = await Promise.all([
     prisma.client.findUnique({
       where: { id: clientId },
       include: {
@@ -26,6 +31,7 @@ export default async function EditClientPage({
       include: { recurring: true, subtasks: true },
       orderBy: { name: "asc" },
     }),
+    clientGroupNames(user),
   ]);
 
   if (!client) notFound();
@@ -75,6 +81,8 @@ export default async function EditClientPage({
         businessTypes={businessTypes}
         services={services}
         assignedServiceIds={assignedServiceIds}
+        canManageServices={user.role === "ADMIN"}
+        groupSuggestions={groups}
       />
     </div>
   );
