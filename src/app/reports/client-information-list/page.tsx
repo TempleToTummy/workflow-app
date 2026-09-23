@@ -4,6 +4,7 @@ import { ReportHeader } from "@/components/report-header";
 
 export default async function ClientInformationListPage() {
   const clients = await prisma.client.findMany({
+    where: { archivedAt: null },
     include: { corpType: true, businessType: true },
     orderBy: { companyName: "asc" },
   });

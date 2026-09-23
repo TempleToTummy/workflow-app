@@ -7,6 +7,7 @@ import type { Role } from "@prisma/client";
 import { REPORTS, ADMIN_GROUPS } from "@/lib/nav-data";
 import { logout } from "@/lib/auth-actions";
 import { RunningTimerBar } from "@/components/running-timer-bar";
+import { SearchBox } from "@/components/search-box";
 
 function NavLink({
   href,
@@ -121,6 +122,10 @@ export function SidebarNav({
         <span className="text-sm font-semibold tracking-tight text-sidebar-ink">Workflow</span>
       </div>
 
+      <div className="px-3 pb-3">
+        <SearchBox compact />
+      </div>
+
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-4">
         <NavLink href="/" label="Dashboard" exact />
         <NavLink href="/clients" label="Clients" />
@@ -192,14 +197,20 @@ export function SidebarNav({
       )}
 
       <div className="flex flex-col gap-1 border-t border-sidebar-border px-3 py-3">
-        <div className="px-3">
+        <Link
+          href="/account"
+          title="Account & security"
+          className={`rounded-md px-3 py-1.5 transition-colors hover:bg-sidebar-hover ${
+            pathname === "/account" ? "bg-sidebar-active-bg" : ""
+          }`}
+        >
           <p className="truncate text-sm text-sidebar-ink">
             {user.firstName} {user.lastName}
           </p>
           <p className="text-[11px] uppercase tracking-wide text-sidebar-ink-muted">
-            {isAdmin ? "Admin" : "Employee"}
+            {isAdmin ? "Admin" : "Employee"} · Account &amp; security
           </p>
-        </div>
+        </Link>
         <SignOutButton />
       </div>
     </aside>

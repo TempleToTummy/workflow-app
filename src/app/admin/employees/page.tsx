@@ -4,12 +4,23 @@ import { DeleteButton } from "@/components/delete-button";
 import { RoleSelect, AccountCell } from "@/components/employee-account-cell";
 import { EmployeeBillingCell } from "@/components/employee-billing-cell";
 import { deleteEmployee } from "@/lib/actions";
+import { EmployeeSecurityCell } from "@/components/employee-security-cell";
+import { requireAdmin } from "@/lib/auth";
 
 export default async function EmployeesPage() {
-  const employees = await prisma.employee.findMany({
-    include: { employeeType: true },
-    orderBy: { firstName: "asc" },
-  });
+  const admin = await requireAdmin();
+  const [employees, sessionCounts] = await Promise.all([
+    prisma.employee.findMany({
+      include: { employeeType: true },
+      orderBy: { firstName: "asc" },
+    }),
+    prisma.session.groupBy({
+      by: ["employeeId"],
+      where: { expiresAt: { gt: new Date() } },
+      _count: { _all: true },
+    }),
+  ]);
+  const sessionsBy = new Map(sessionCounts.map((s) => [s.employeeId, s._count._all]));
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
@@ -72,6 +83,15 @@ export default async function EmployeesPage() {
                     hasPassword={e.passwordHash !== null}
                     inviteToken={e.inviteToken}
                   />
+                  {e.passwordHash !== null && (
+                    <EmployeeSecurityCell
+                      employeeId={e.id}
+                      name={`${e.firstName} ${e.lastName}`}
+                      twoFactor={e.totpEnabledAt !== null}
+                      sessions={sessionsBy.get(e.id) ?? 0}
+                      isSelf={e.id === admin.id}
+                    />
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-3">

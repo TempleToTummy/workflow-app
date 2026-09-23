@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { NO_GROUP } from "@/lib/client-filters";
 
 type Option = { value: string; label: string };
 
@@ -48,6 +49,20 @@ const Icon = {
     <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" aria-hidden>
       <circle cx="10" cy="10" r="6.5" stroke="currentColor" strokeWidth="1.6" />
       <path d="M7.2 10.2l2 2 3.8-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  group: (
+    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" aria-hidden>
+      <rect x="3" y="3" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="11" y="3" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="3" y="11" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="11" y="11" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  ),
+  tag: (
+    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" aria-hidden>
+      <path d="M3 10.2V4.5A1.5 1.5 0 014.5 3h5.7L17 9.8a1.5 1.5 0 010 2.1l-5.1 5.1a1.5 1.5 0 01-2.1 0L3 10.2z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <circle cx="7" cy="7" r="1.2" fill="currentColor" />
     </svg>
   ),
   caret: (
@@ -183,7 +198,7 @@ const DUE_OPTIONS: Option[] = [
   { value: "next-week", label: "Due next week" },
 ];
 
-const FILTER_KEYS = ["q", "status", "clientId", "assigneeId", "projectId", "period", "due"];
+const FILTER_KEYS = ["q", "status", "clientId", "assigneeId", "projectId", "period", "due", "group", "tag"];
 
 // Search + filter chips, driven entirely by the URL so every view is linkable.
 // Pages opt in to the extra chips by passing their options; /tasks and the
@@ -193,16 +208,22 @@ export function FilterBar({
   employees,
   projects,
   periods,
+  groups,
+  tags,
   search = false,
   searchPlaceholder = "Search…",
   due = false,
   statuses,
   trailing,
 }: {
-  clients: Option[];
+  // Omit to hide the Client chip (the Clients page itself filters by name).
+  clients?: Option[];
   employees?: Option[];
   projects?: Option[];
   periods?: Option[];
+  // Client groups (Client.groupName) and tags. Omitted = chip hidden.
+  groups?: Option[];
+  tags?: Option[];
   search?: boolean;
   searchPlaceholder?: string;
   due?: boolean;
@@ -318,14 +339,36 @@ export function FilterBar({
             options={employees}
           />
         )}
-        <FilterChip
-          icon={Icon.people}
-          label="Client"
-          allLabel="All clients"
-          value={searchParams.get("clientId") ?? ""}
-          onChange={(v) => setParam("clientId", v)}
-          options={clients}
-        />
+        {clients && (
+          <FilterChip
+            icon={Icon.people}
+            label="Client"
+            allLabel="All clients"
+            value={searchParams.get("clientId") ?? ""}
+            onChange={(v) => setParam("clientId", v)}
+            options={clients}
+          />
+        )}
+        {groups && (
+          <FilterChip
+            icon={Icon.group}
+            label="Group"
+            allLabel="All groups"
+            value={searchParams.get("group") ?? ""}
+            onChange={(v) => setParam("group", v)}
+            options={[...groups, { value: NO_GROUP, label: "(No group)" }]}
+          />
+        )}
+        {tags && (
+          <FilterChip
+            icon={Icon.tag}
+            label="Tag"
+            allLabel="Any tag"
+            value={searchParams.get("tag") ?? ""}
+            onChange={(v) => setParam("tag", v)}
+            options={tags}
+          />
+        )}
         {projects && (
           <FilterChip
             icon={Icon.folder}
@@ -349,7 +392,15 @@ export function FilterBar({
         {hasFilters && (
           <button
             type="button"
-            onClick={() => router.push(pathname)}
+            onClick={() =>
+              // Clears the filters but keeps page-level switches (a view tab,
+              // the archived toggle), which aren't filters.
+              router.push(
+                buildUrl((p) => {
+                  for (const k of FILTER_KEYS) p.delete(k);
+                })
+              )
+            }
             className="ml-1 text-sm text-ink-muted underline decoration-dotted underline-offset-2 hover:text-accent"
           >
             Clear filters

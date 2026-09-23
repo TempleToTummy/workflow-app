@@ -3,6 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser, requireAdmin, type CurrentUser } from "@/lib/auth";
+import {
+  requireActivityAccess,
+  requireClientAccess,
+  requireEngagementAccess,
+} from "@/lib/access";
 import { recordAudit, actorFrom, AUDIT } from "@/lib/audit";
 import {
   stopTimer,
@@ -96,7 +101,9 @@ export type StartTimerResult = {
 };
 
 export async function startTimer(activityId: string): Promise<StartTimerResult> {
-  const user = await requireUser();
+  // Booking time against a task is working the engagement, so it needs the
+  // same access as ticking the task.
+  const { user } = await requireActivityAccess(activityId);
   const context = await contextForActivity(activityId);
 
   // Stop whatever else is running first. Doing this before the insert means a
@@ -247,10 +254,16 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
     contextLabel: string | null;
   };
 
+  // Admins may book time on anything; everyone else only against work they
+  // can see. Checked on the caller, not the subject: an admin logging time for
+  // a colleague is the admin's access being used.
   if (input.activityId) {
+    await requireActivityAccess(input.activityId);
     const resolved = await contextForActivity(input.activityId);
     context = { ...resolved };
   } else if (input.clientId) {
+    if (input.projectId) await requireEngagementAccess(input.clientId, input.projectId);
+    else await requireClientAccess(input.clientId);
     const client = await prisma.client.findUniqueOrThrow({
       where: { id: input.clientId },
       select: { id: true, companyName: true },

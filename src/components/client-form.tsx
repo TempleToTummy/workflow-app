@@ -126,6 +126,8 @@ export function ClientForm({
   businessTypes,
   services,
   assignedServiceIds = [],
+  canManageServices = true,
+  groupSuggestions = [],
 }: {
   mode: "create" | "edit";
   client?: ExistingClient;
@@ -134,6 +136,12 @@ export function ClientForm({
   businessTypes: Lookup[];
   services: ServiceOption[];
   assignedServiceIds?: string[];
+  // Turning a service on for a client is an admin action (see
+  // src/lib/permissions.ts). Employees see the services read-only.
+  canManageServices?: boolean;
+  // Existing group names, offered as suggestions so "Smith Family" and
+  // "smith family" don't become two groups by accident.
+  groupSuggestions?: string[];
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -230,7 +238,9 @@ export function ClientForm({
     };
 
     const alreadyAssigned = new Set(assignedServiceIds);
-    const newlySelected = [...selectedServices].filter((id) => !alreadyAssigned.has(id));
+    const newlySelected = canManageServices
+      ? [...selectedServices].filter((id) => !alreadyAssigned.has(id))
+      : [];
 
     startTransition(async () => {
       try {
@@ -284,8 +294,16 @@ export function ClientForm({
             <input
               name="groupName"
               defaultValue={client?.groupName ?? ""}
+              list="client-group-suggestions"
+              placeholder="e.g. Smith Family, Restaurants"
+              autoComplete="off"
               className={inputClass}
             />
+            <datalist id="client-group-suggestions">
+              {groupSuggestions.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
           </Field>
           <Field label="Corporation Type">
             <select
@@ -483,12 +501,15 @@ export function ClientForm({
           Services
         </h2>
         <p className="mb-4 text-xs text-ink-muted">
-          Which recurring projects does this client need? Checking a service assigns it
-          starting this period and generates its checklist.
+          {canManageServices
+            ? "Which recurring projects does this client need? Checking a service assigns it starting this period and generates its checklist."
+            : "The services this client is on. Ask an admin to add or change services."}
         </p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {services.map((s) => {
-            const disabled = s.stepCount === 0 && !assignedServiceIds.includes(s.id);
+            const disabled =
+              !canManageServices || (s.stepCount === 0 && !assignedServiceIds.includes(s.id));
+            if (!canManageServices && !assignedServiceIds.includes(s.id)) return null;
             return (
               <label
                 key={s.id}
@@ -507,7 +528,7 @@ export function ClientForm({
                   <span className="block font-medium text-ink">{s.name}</span>
                   <span className="block text-xs text-ink-muted">
                     {RECURRING_LABELS[s.recurring] ?? s.recurring}
-                    {disabled && " · checklist not configured yet"}
+                    {canManageServices && disabled && " · checklist not configured yet"}
                   </span>
                 </span>
               </label>

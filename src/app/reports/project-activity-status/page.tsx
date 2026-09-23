@@ -8,8 +8,8 @@ import { ReportHeader } from "@/components/report-header";
 export default async function ProjectActivityStatusPage() {
   const [projects, assignments, activities, periods] = await Promise.all([
     prisma.project.findMany({ orderBy: { name: "asc" } }),
-    prisma.projectClientMap.findMany({ where: { active: true }, include: { client: true } }),
-    prisma.clientActivity.findMany(),
+    prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } }, include: { client: true } }),
+    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
     prisma.accountingPeriod.findMany(),
   ]);
 

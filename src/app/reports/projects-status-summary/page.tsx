@@ -12,8 +12,8 @@ const RECURRING_LABELS: Record<string, string> = {
 export default async function ProjectsStatusSummaryPage() {
   const [projects, assignments, activities] = await Promise.all([
     prisma.project.findMany({ include: { recurring: true }, orderBy: { name: "asc" } }),
-    prisma.projectClientMap.findMany({ where: { active: true } }),
-    prisma.clientActivity.findMany(),
+    prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
+    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
 
   const rows = projects.map((p) => {

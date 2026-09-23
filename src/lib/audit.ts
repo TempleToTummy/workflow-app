@@ -54,11 +54,25 @@ export const AUDIT = {
   ROLE_CHANGED: "role.changed",
   ACCESS_REVOKED: "access.revoked",
   EMPLOYEE_CREATED: "employee.created",
+  EMPLOYEE_UPDATED: "employee.updated",
   EMPLOYEE_DELETED: "employee.deleted",
+  PASSWORD_CHANGED: "password.changed",
+  MFA_ENABLED: "mfa.enabled",
+  MFA_DISABLED: "mfa.disabled",
+  MFA_RESET: "mfa.reset",
+  MFA_FAILED: "mfa.failed",
+  RECOVERY_CODE_USED: "mfa.recovery_code_used",
+  SESSION_REVOKED: "session.revoked",
   // Clients
   CLIENT_CREATED: "client.created",
   CLIENT_UPDATED: "client.updated",
+  CLIENT_ARCHIVED: "client.archived",
+  CLIENT_RESTORED: "client.restored",
   CLIENT_DELETED: "client.deleted",
+  CLIENT_TAGS_CHANGED: "client.tags_changed",
+  // Data safety
+  BACKUP_EXPORTED: "backup.exported",
+  BACKUP_RESTORED: "backup.restored",
 } as const;
 
 export type AuditAction = (typeof AUDIT)[keyof typeof AUDIT];
@@ -184,10 +198,23 @@ const ACTION_META: Record<string, { label: string; tone: "neutral" | "good" | "w
   [AUDIT.ROLE_CHANGED]: { label: "Role", tone: "warn" },
   [AUDIT.ACCESS_REVOKED]: { label: "Access revoked", tone: "bad" },
   [AUDIT.EMPLOYEE_CREATED]: { label: "Employee added", tone: "good" },
+  [AUDIT.EMPLOYEE_UPDATED]: { label: "Employee", tone: "neutral" },
   [AUDIT.EMPLOYEE_DELETED]: { label: "Employee removed", tone: "bad" },
+  [AUDIT.PASSWORD_CHANGED]: { label: "Password changed", tone: "warn" },
+  [AUDIT.MFA_ENABLED]: { label: "2FA on", tone: "good" },
+  [AUDIT.MFA_DISABLED]: { label: "2FA off", tone: "warn" },
+  [AUDIT.MFA_RESET]: { label: "2FA reset", tone: "bad" },
+  [AUDIT.MFA_FAILED]: { label: "Failed 2FA code", tone: "warn" },
+  [AUDIT.RECOVERY_CODE_USED]: { label: "Recovery code used", tone: "warn" },
+  [AUDIT.SESSION_REVOKED]: { label: "Signed out remotely", tone: "warn" },
   [AUDIT.CLIENT_CREATED]: { label: "Client added", tone: "good" },
   [AUDIT.CLIENT_UPDATED]: { label: "Client", tone: "neutral" },
+  [AUDIT.CLIENT_ARCHIVED]: { label: "Client archived", tone: "warn" },
+  [AUDIT.CLIENT_RESTORED]: { label: "Client restored", tone: "good" },
   [AUDIT.CLIENT_DELETED]: { label: "Client removed", tone: "bad" },
+  [AUDIT.CLIENT_TAGS_CHANGED]: { label: "Tags", tone: "neutral" },
+  [AUDIT.BACKUP_EXPORTED]: { label: "Backup downloaded", tone: "warn" },
+  [AUDIT.BACKUP_RESTORED]: { label: "Backup restored", tone: "bad" },
 };
 
 export function actionMeta(action: string) {
@@ -246,12 +273,31 @@ export const AUDIT_FILTER_GROUPS: { heading: string; actions: string[] }[] = [
       AUDIT.ROLE_CHANGED,
       AUDIT.ACCESS_REVOKED,
       AUDIT.EMPLOYEE_CREATED,
+      AUDIT.EMPLOYEE_UPDATED,
       AUDIT.EMPLOYEE_DELETED,
+      AUDIT.PASSWORD_CHANGED,
+      AUDIT.MFA_ENABLED,
+      AUDIT.MFA_DISABLED,
+      AUDIT.MFA_RESET,
+      AUDIT.MFA_FAILED,
+      AUDIT.RECOVERY_CODE_USED,
+      AUDIT.SESSION_REVOKED,
     ],
   },
   {
     heading: "Clients",
-    actions: [AUDIT.CLIENT_CREATED, AUDIT.CLIENT_UPDATED, AUDIT.CLIENT_DELETED],
+    actions: [
+      AUDIT.CLIENT_CREATED,
+      AUDIT.CLIENT_UPDATED,
+      AUDIT.CLIENT_ARCHIVED,
+      AUDIT.CLIENT_RESTORED,
+      AUDIT.CLIENT_DELETED,
+      AUDIT.CLIENT_TAGS_CHANGED,
+    ],
+  },
+  {
+    heading: "Data safety",
+    actions: [AUDIT.BACKUP_EXPORTED, AUDIT.BACKUP_RESTORED],
   },
 ];
 

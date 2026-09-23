@@ -325,7 +325,6 @@ export default async function AssignmentDetailPage({
               clientId={clientId}
               projectId={projectId}
               periodName={periodName}
-              employees={employeeOptions}
               documents={documents.map((d) => ({
                 id: d.id,
                 filename: d.filename,
@@ -396,12 +395,12 @@ export default async function AssignmentDetailPage({
             <AssignmentNotes
               clientId={clientId}
               projectId={projectId}
-              employees={employeeOptions}
               notes={notes.map((n) => ({
                 id: n.id,
                 body: n.body,
                 authorName: n.author ? employeeName(n.author) : null,
                 createdAt: n.createdAt.toISOString(),
+                canEdit: user.role === "ADMIN" || n.authorId === user.id,
               }))}
             />
           )}

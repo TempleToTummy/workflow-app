@@ -61,7 +61,11 @@ export const config = {
   // Everything except Next internals and static asset files. API routes are
   // included so unauthenticated file downloads get bounced too (the route
   // handler also checks).
+  //
+  // /api/backup is excluded: the proxy buffers request bodies and truncates
+  // them at 10 MB, which would corrupt a restore upload. That route checks for
+  // an admin session itself (src/app/api/backup/route.ts).
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/backup|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

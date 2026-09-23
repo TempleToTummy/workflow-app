@@ -211,6 +211,9 @@ const PROJECT_CATALOG: {
 async function main() {
   console.log("Seeding database...");
 
+  await prisma.savedView.deleteMany();
+  await prisma.loginChallenge.deleteMany();
+  await prisma.tag.deleteMany(); // ClientTag rows cascade
   await prisma.emailMessage.deleteMany();
   await prisma.emailTemplate.deleteMany();
   await prisma.assignmentNote.deleteMany();

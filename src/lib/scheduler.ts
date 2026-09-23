@@ -232,7 +232,9 @@ export async function generatePeriods(options: {
 
   try {
     const assignments = await prisma.projectClientMap.findMany({
-      where: { active: true },
+      // An archived client gets no new work. Its engagements stay active so a
+      // restore picks up where it left off (see restoreClient in actions.ts).
+      where: { active: true, client: { archivedAt: null } },
       include: {
         client: { select: { companyName: true } },
         project: {

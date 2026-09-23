@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { DeleteClientButton } from "@/components/delete-client-button";
+import { ArchiveClientButton, ArchivedClientBanner } from "@/components/client-archive-controls";
+import { ClientTagEditor } from "@/components/client-tag-editor";
 import { AssignProjectPanel } from "@/components/assign-project-panel";
 import { ContactManager } from "@/components/contact-manager";
 import { requireUser, assigneeScope } from "@/lib/auth";
@@ -29,10 +30,24 @@ export default async function ClientDetailPage({
     if (onIt === 0) redirect("/clients");
   }
 
-  const [client, allProjects, documents, periods] = await Promise.all([
+  // An employee may be on one of this client's services and not another; the
+  // file list below only shows files from engagements they can open.
+  const myProjectIds = mine
+    ? (
+        await prisma.clientActivity.findMany({
+          where: { clientId, assigneeId: mine },
+          select: { projectId: true },
+          distinct: ["projectId"],
+        })
+      ).map((r) => r.projectId)
+    : null;
+  const isAdmin = user.role === "ADMIN";
+
+  const [client, allProjects, documents, periods, allTags] = await Promise.all([
     prisma.client.findUnique({
       where: { id: clientId },
       include: {
+        tags: { include: { tag: true }, orderBy: { createdAt: "asc" } },
         businessType: true,
         corpType: true,
         contacts: { orderBy: { createdAt: "asc" } },
@@ -44,14 +59,36 @@ export default async function ClientDetailPage({
       orderBy: { name: "asc" },
     }),
     prisma.document.findMany({
-      where: { clientId },
+      where: { clientId, ...(myProjectIds ? { projectId: { in: myProjectIds } } : {}) },
       include: { project: true, uploadedBy: true },
       orderBy: { createdAt: "desc" },
     }),
     prisma.accountingPeriod.findMany(),
+    prisma.tag.findMany({ orderBy: { name: "asc" } }),
   ]);
 
   if (!client) notFound();
+
+  // Whether permanent deletion is possible, spelled out so the archived
+  // banner can say why not before anyone clicks.
+  let historySummary: string | null = null;
+  if (client.archivedAt && isAdmin) {
+    const [tasks, services, files, time, emails] = await Promise.all([
+      prisma.clientActivity.count({ where: { clientId } }),
+      prisma.projectClientMap.count({ where: { clientId } }),
+      prisma.document.count({ where: { clientId } }),
+      prisma.timeEntry.count({ where: { clientId } }),
+      prisma.emailMessage.count({ where: { clientId } }),
+    ]);
+    const parts = [
+      tasks && `${tasks} task${tasks === 1 ? "" : "s"}`,
+      services && `${services} service${services === 1 ? "" : "s"}`,
+      files && `${files} file${files === 1 ? "" : "s"}`,
+      time && `${time} time entr${time === 1 ? "y" : "ies"}`,
+      emails && `${emails} email${emails === 1 ? "" : "s"}`,
+    ].filter(Boolean);
+    historySummary = parts.length ? parts.join(", ") : null;
+  }
 
   // Every file this client has, grouped project → period, so a finished
   // period's uploads are still findable after the engagement rolls forward.
@@ -88,11 +125,27 @@ export default async function ClientDetailPage({
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
       <div className="flex items-center justify-between">
-        <Link href="/clients" className="text-sm text-ink-muted hover:text-accent">
+        <Link
+          href={client.archivedAt ? "/clients?archived=1" : "/clients"}
+          className="text-sm text-ink-muted hover:text-accent"
+        >
           ← Back to clients
         </Link>
-        <DeleteClientButton clientId={client.id} clientName={client.companyName} />
+        {isAdmin && !client.archivedAt && (
+          <ArchiveClientButton clientId={client.id} clientName={client.companyName} />
+        )}
       </div>
+
+      {client.archivedAt && (
+        <ArchivedClientBanner
+          clientId={client.id}
+          clientName={client.companyName}
+          archivedAt={client.archivedAt.toISOString()}
+          archivedBy={client.archivedByLabel}
+          canManage={isAdmin}
+          historySummary={historySummary}
+        />
+      )}
 
       <div className="mt-6 rounded-lg border border-line bg-surface p-6">
         <div className="mb-4 flex items-center justify-between">
@@ -113,7 +166,30 @@ export default async function ClientDetailPage({
           </div>
           <div>
             <dt className="text-xs text-ink-muted">Group Name</dt>
-            <dd className="text-ink">{client.groupName ?? "—"}</dd>
+            <dd className="text-ink">
+              {client.groupName ? (
+                <Link
+                  href={`/clients?group=${encodeURIComponent(client.groupName)}`}
+                  className="hover:text-accent"
+                  title="See every client in this group"
+                >
+                  {client.groupName}
+                </Link>
+              ) : (
+                "—"
+              )}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="mb-1 text-xs text-ink-muted">Tags</dt>
+            <dd>
+              <ClientTagEditor
+                clientId={client.id}
+                canEdit
+                tags={client.tags.map((ct) => ({ id: ct.tag.id, name: ct.tag.name, color: ct.tag.color }))}
+                allTags={allTags.map((t) => ({ id: t.id, name: t.name, color: t.color }))}
+              />
+            </dd>
           </div>
           <div>
             <dt className="text-xs text-ink-muted">Corporation Type</dt>
@@ -230,7 +306,9 @@ export default async function ClientDetailPage({
           </tbody>
         </table>
 
-        <AssignProjectPanel clientId={client.id} projects={assignable} />
+        {isAdmin && !client.archivedAt && (
+          <AssignProjectPanel clientId={client.id} projects={assignable} />
+        )}
       </div>
 
       <div className="mt-6 rounded-lg border border-line bg-surface p-6">

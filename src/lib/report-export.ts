@@ -63,8 +63,12 @@ export type ExportContext = {
 // the reports all need. Read once per export rather than per row.
 async function currentPeriodIndex() {
   const [assignments, activities] = await Promise.all([
-    prisma.projectClientMap.findMany({ where: { active: true }, include: { client: true } }),
+    prisma.projectClientMap.findMany({
+      where: { active: true, client: { archivedAt: null } },
+      include: { client: true },
+    }),
     prisma.clientActivity.findMany({
+      where: { client: { archivedAt: null } },
       select: {
         clientId: true,
         projectId: true,
@@ -97,6 +101,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
     scope: "admin",
     async build() {
       const rows = await prisma.clientActivity.findMany({
+        where: { client: { archivedAt: null } },
         include: {
           client: { select: { companyName: true } },
           project: { select: { name: true } },
@@ -239,7 +244,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
     scope: "admin",
     async build() {
       const [clients, projects, index] = await Promise.all([
-        prisma.client.findMany({ orderBy: { companyName: "asc" } }),
+        prisma.client.findMany({ where: { archivedAt: null }, orderBy: { companyName: "asc" } }),
         prisma.project.findMany({ orderBy: { name: "asc" } }),
         currentPeriodIndex(),
       ]);
@@ -383,6 +388,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
     scope: "admin",
     async build() {
       const assignments = await prisma.projectClientMap.findMany({
+        where: { client: { archivedAt: null } },
         include: {
           client: true,
           project: true,
@@ -425,6 +431,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
     scope: "admin",
     async build() {
       const clients = await prisma.client.findMany({
+        where: { archivedAt: null },
         include: { corpType: true, businessType: true },
         orderBy: { companyName: "asc" },
       });
@@ -607,7 +614,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
           orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
         }),
         prisma.clientActivity.findMany({
-          where: { status: { not: "DONE" }, assigneeId: { not: null } },
+          where: { status: { not: "DONE" }, assigneeId: { not: null }, client: { archivedAt: null } },
           select: {
             assigneeId: true,
             status: true,

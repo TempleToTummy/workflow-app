@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireEngagementAccess } from "@/lib/access";
 import { newToken, hashToken } from "@/lib/password";
 import { recordAudit, actorFrom, AUDIT } from "@/lib/audit";
 import { objectStore, documentStorageKey, DEFAULT_BUCKET } from "@/lib/storage";
@@ -85,10 +85,20 @@ export type CreateRequestResult = {
   emailed: { to: string; delivered: boolean } | null;
 };
 
+// A request id resolves to its engagement, and access is judged on that.
+async function requireRequestAccess(requestId: string) {
+  const request = await prisma.clientRequest.findUnique({
+    where: { id: requestId },
+    select: { clientId: true, projectId: true },
+  });
+  if (!request) throw new Error("That request no longer exists.");
+  return requireEngagementAccess(request.clientId, request.projectId);
+}
+
 export async function createClientRequest(
   input: CreateRequestInput
 ): Promise<CreateRequestResult> {
-  const user = await requireUser();
+  const user = await requireEngagementAccess(input.clientId, input.projectId);
 
   const title = input.title.trim();
   if (!title) throw new Error("Say what you're asking the client for.");
@@ -179,7 +189,7 @@ export async function resendClientRequest(
   requestId: string,
   options?: { email?: boolean }
 ): Promise<CreateRequestResult> {
-  const user = await requireUser();
+  const user = await requireRequestAccess(requestId);
   const before = await prisma.clientRequest.findUniqueOrThrow({
     where: { id: requestId },
     include: { client: { select: { companyName: true } }, project: { select: { name: true } } },
@@ -229,7 +239,7 @@ export async function resendClientRequest(
 }
 
 export async function revokeClientRequest(requestId: string): Promise<void> {
-  const user = await requireUser();
+  const user = await requireRequestAccess(requestId);
   const before = await prisma.clientRequest.findUniqueOrThrow({
     where: { id: requestId },
     include: { client: { select: { companyName: true } }, project: { select: { name: true } } },

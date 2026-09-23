@@ -47,7 +47,16 @@ export default async function TimePage({
     scope.employeeId
       ? Promise.resolve([])
       : prisma.employee.findMany({ orderBy: [{ firstName: "asc" }, { lastName: "asc" }] }),
-    prisma.client.findMany({ orderBy: { companyName: "asc" } }),
+    // Scoped like every other client picker: an employee can only book time
+    // to clients they work with (the action refuses anything else), so
+    // listing the rest would be both a leak and a trap.
+    prisma.client.findMany({
+      where: {
+        archivedAt: null,
+        ...(user.role === "ADMIN" ? {} : { activities: { some: { assigneeId: user.id } } }),
+      },
+      orderBy: { companyName: "asc" },
+    }),
   ]);
 
   const rollup = rollUp(

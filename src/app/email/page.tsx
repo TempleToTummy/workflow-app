@@ -97,7 +97,10 @@ export default async function EmailPage({
       }))
     ),
     prisma.client.findMany({
-      where: user.role === "ADMIN" ? undefined : { activities: { some: { assigneeId: user.id } } },
+      where: {
+        archivedAt: null,
+        ...(user.role === "ADMIN" ? {} : { activities: { some: { assigneeId: user.id } } }),
+      },
       orderBy: { companyName: "asc" },
       select: { id: true, companyName: true },
     }),

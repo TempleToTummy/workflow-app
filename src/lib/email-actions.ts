@@ -194,7 +194,10 @@ export async function buildTemplateContext(input: {
   periodName?: string | null;
   contactFirstName?: string | null;
 }): Promise<TemplateContext> {
-  const user = await requireUser();
+  // The preview reads live engagement data (open task count, next step, due
+  // date), so it needs the same access as sending — otherwise it's a way to
+  // read another client's progress by id.
+  const user = await assertCanEmailClient(input.clientId);
 
   const context: TemplateContext = {
     sender_name: `${user.firstName} ${user.lastName}`,

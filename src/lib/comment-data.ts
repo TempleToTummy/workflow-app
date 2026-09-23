@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { CurrentUser } from "@/lib/auth";
+import { canAccessEngagement } from "@/lib/access";
 
 // Task-discussion reads. Not a "use server" module — these are queries for
 // server components; the mutations are in src/lib/comment-actions.ts.
@@ -154,20 +155,13 @@ export async function mentionCandidates() {
 }
 
 // Whether an employee may see a given step's discussion, matching the
-// engagement-level gate the assignment page already applies.
+// engagement-level gate the assignment page already applies. The rule itself
+// lives in src/lib/access.ts so reads and writes can't drift apart.
 export async function canSeeActivity(user: CurrentUser, activityId: string): Promise<boolean> {
-  if (user.role === "ADMIN") return true;
   const activity = await prisma.clientActivity.findUnique({
     where: { id: activityId },
     select: { clientId: true, projectId: true },
   });
   if (!activity) return false;
-  const onIt = await prisma.clientActivity.count({
-    where: {
-      clientId: activity.clientId,
-      projectId: activity.projectId,
-      assigneeId: user.id,
-    },
-  });
-  return onIt > 0;
+  return canAccessEngagement(user, activity.clientId, activity.projectId);
 }

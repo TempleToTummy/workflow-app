@@ -16,6 +16,9 @@ npm run dev
 
 Then open http://localhost:3000. You'll be sent to `/login`.
 
+Updating an existing checkout? Run `npm install` and `npx prisma db push` after
+pulling — new features add tables and columns (all additive; no data is lost).
+
 ## Signing in
 
 The seed creates one working account:
@@ -29,8 +32,8 @@ Everyone else (`priya@`, `marcus@`, `dana@firm.test`) is **invite-pending**:
 no password yet. As the admin, open **Admin Menu → Employees**, hit **Copy
 link** on a row, and send that `/invite/<token>` URL to the person — they set
 their own password and land in the app. Roles are **Admin** or **Employee**;
-an admin flips a role from the Employees table. Employees see everything except
-the Admin Menu.
+an admin flips a role from the Employees table. Employees see and work only the
+engagements they have a task on (see **Permissions** below).
 
 To change the admin password, edit `ADMIN_PASSWORD` in `prisma/seed.ts` and
 re-seed, or use **Revoke** on the admin row and accept a fresh invite.
@@ -49,6 +52,120 @@ a live status and progress count. Click into any row to see the ordered task
 checklist and change task status, sequential completion is enforced the same
 way the original app's trigger enforced it, you can't mark a task Done while
 an earlier task in the same period is still open.
+
+## Permissions
+
+Writing needs the same access as reading. Every server action checks it
+(`src/lib/permissions.ts` is the policy, `src/lib/access.ts` enforces it), so an
+id guessed or kept from an old assignment gets nowhere:
+
+| Who | Can |
+| --- | --- |
+| Employee, on an engagement (has a task on that client + service, any period) | Work it: step status, assignees, subtasks, notes, files, comments, timers, client requests, the engagement's deadline override and default owner |
+| Employee, on any of a client's engagements | Edit that client's details, contacts and tags |
+| Admin | All of the above for every client, plus firm structure: add / archive / delete clients, turn services on for a client, and edit service templates (checklist steps, due rules, step owners, estimates) |
+
+Employees see service templates read-only, since a template change alters every
+client on that service. A refusal never says whether the record exists. Notes
+and uploads are recorded under the signed-in user (the old "Author…" picker is
+gone), and only a note's author or an admin can edit or delete it. File
+downloads, the client edit page and the email template preview follow the same
+rules.
+
+## Search
+
+The box at the top of the sidebar (press **/** anywhere) searches clients (name,
+group, email, phone, tax ID, city, note, tags), contacts, services, checklist
+steps and their notes, task comments, engagement notes, file names and email.
+Results are grouped with the match highlighted; each group can be opened on its
+own. Every group is scoped exactly like the page it links to, so an employee
+only finds things on the engagements they're assigned to.
+
+## Bulk actions
+
+- **Tasks** — tick rows (or the header box for everything shown), then **Set
+  status** or **Assign to**. Bulk *Done* follows the checklist order per
+  engagement: selecting steps 1, 2 and 3 marks all three, but a step whose
+  earlier step is still open is skipped and the result says which step it's
+  waiting on. Finishing a period in bulk rolls it forward like doing it by hand.
+- **Dashboard** — tick rows and **Assign open steps to…** someone (optionally
+  only the unassigned ones). Done steps keep whoever did them.
+- **Clients** — tick clients to **Add tag** or **Set group** in one go.
+
+Rows you can't access are skipped and counted, never silently changed; every
+change is written to the activity log individually.
+
+## Groups, tags and saved views
+
+- **Groups** use the client's *Group Name* (one per client, e.g. "Smith Family").
+  Filter by group on the dashboard, tasks and clients pages, or switch the client
+  list to **By group**. The client form suggests existing group names.
+- **Tags** are labels a client can have many of ("VIP", "Needs 1099s"). Add them
+  on a client's page (typing an existing tag in any case reuses it) or in bulk;
+  filter by tag anywhere groups can be filtered. Admins rename, recolour and
+  delete tags under **Admin Menu → Client Tags**.
+- **Saved views** — on the dashboard and tasks list, **Views → Save current view…**
+  names the filters you have applied. Admins can share a view with the whole
+  team. The button shows which view is active.
+
+## Archiving clients
+
+**Archive client** (admin, on the client's page) replaces delete. An archived
+client disappears from the dashboard, tasks, projects, workload, reports, CSV
+exports, search and pickers; the scheduler stops opening periods for it; and any
+open client-request links are revoked. Nothing is removed — history, files and
+time stay — and **Clients → Archived → Restore client** brings it back, resuming
+its services from the *current* period rather than generating the months it was
+archived. **Delete permanently** is only offered for an archived client with no
+history at all, and asks you to type the client's name.
+
+## Backup and restore
+
+**Admin Menu → Backup & Restore**:
+
+- **Download backup** — one JSON file with every table (optionally including
+  uploaded files). It restores into SQLite or Postgres alike. Sessions and
+  pending invite/reset links are left out. Downloads are audited.
+- **Restore** — choose a file, **Check file** to compare its contents with what's
+  there now, type `RESTORE`, and it replaces everything in a single transaction
+  (a bad file changes nothing). The current data is saved as a snapshot first, so
+  restoring the wrong file can be undone. Everyone is signed out afterwards.
+
+From the command line (for cron, or when the app won't start):
+
+```bash
+npm run db:backup                        # → backups/workflow-backup-<date>.json
+npm run db:backup -- --files --keep 30   # include files; keep the newest 30
+npm run db:restore -- backups/<file>.json        # dry run: shows what's in it
+npm run db:restore -- backups/<file>.json --yes  # replace all data
+```
+
+Set `BACKUP_DIR` to put backups somewhere that outlives the server. The file
+holds client tax IDs, contacts and password hashes — store it like the database.
+
+## Two-factor authentication and sessions
+
+Everyone has an **Account & security** page (click your name at the bottom of the
+sidebar):
+
+- **Two-factor authentication** — scan the QR code with any authenticator app,
+  confirm with a code, and save the ten one-time recovery codes shown. After
+  that, sign-in asks for a code after the password. A used code can't be
+  replayed; wrong codes are rate limited. A password reset on a 2FA account
+  still asks for the code. Turning 2FA off or making new recovery codes needs
+  your password. Admins are prompted to turn it on.
+- **Where you're signed in** — every session with its device, IP and last
+  activity. Sign one out, or all but this browser.
+- **Password** — change it (current password required); other devices are
+  signed out by default.
+
+Admins see each person's 2FA status and session count on **Employees**, with
+**Reset 2FA** (lost phone *and* recovery codes) and **Sign out everywhere**.
+Revoking someone's access also clears their 2FA.
+
+Set `AUTH_SECRET` in the server environment to encrypt 2FA secrets at rest
+(AES-256-GCM). Without it they're stored unencrypted and the Account page says
+so. Don't change `AUTH_SECRET` after people have enrolled.
 
 ## Due dates
 
@@ -415,6 +532,12 @@ Every report has **Export CSV** and **Print** in its top-right corner, as do
 - `src/lib/email.ts` — the mail transport, reply-token threading, template
   rendering, and webhook signature verification. `src/lib/email-actions.ts`
   holds the server actions; `prisma/email-templates.ts` the built-in messages.
+- `src/lib/permissions.ts` / `src/lib/access.ts` — who may change what, and the
+  checks every action runs. `src/lib/bulk.ts` + `bulk-actions.ts` — bulk
+  status/assign. `src/lib/organize-actions.ts` — tags, groups, saved views.
+  `src/lib/backup.ts` + `backup-format.ts` — backup and restore.
+  `src/lib/totp.ts`, `secret-box.ts`, `account-actions.ts` — 2FA, secret
+  encryption, sessions. `src/lib/search.ts` + `search-data.ts` — global search.
 - `src/app/page.tsx` — the dashboard.
 - `src/app/assignments/[clientId]/[projectId]/page.tsx` — the checklist
   view for one client's project.
@@ -434,13 +557,27 @@ Every report has **Export CSV** and **Print** in its top-right corner, as do
 ## Tests
 
 ```bash
-npm test     # 288 assertions across six scripts, no framework, no database
+npm test     # 550 assertions across twelve scripts, no framework, no database
 ```
+
+Among them: `test-core-rules.ts` covers the rules the app stands on —
+`canMarkDone`, `deriveAssignmentStatus`, `dueBucket` (including Sunday/Monday and
+year boundaries) and `nextPeriodName` / period ranges — plus the permission
+policy; `test-security.ts` checks TOTP against the RFC 6238 test vectors.
 
 Every rule worth testing lives in a pure module with no `next/*` and no Prisma
 import, so `tsx script.ts` is a complete test runner. See `scripts/`.
 
 ## Not built yet
+
+- **Enforced 2FA.** Two-factor is strongly recommended to admins but not
+  required of anyone; a firm-wide "must enrol" policy would be a small addition
+  on top of what's here.
+- **Scheduled backups inside the app.** `npm run db:backup` is built for cron, but
+  nothing runs it for you, and backups aren't encrypted — keep them on storage
+  you trust.
+- **Postgres full-text search.** Search uses `contains` (SQLite `LIKE`), which is
+  fine at firm scale; a large database would want a proper index.
 
 - **Automatic** notifications. Email is wired up and reusable, but nothing
   sends on its own except a client-request link and a password reset: nobody

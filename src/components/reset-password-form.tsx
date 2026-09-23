@@ -32,9 +32,11 @@ export function ResetPasswordForm({
     setError(null);
     startTransition(async () => {
       try {
-        await resetPassword({ token, password });
-        // The reset signs you in, so go straight to the app.
-        router.replace("/");
+        const result = await resetPassword({ token, password });
+        // The reset signs you in, so go straight to the app — unless the
+        // account has two-factor on, in which case the sign-in page picks up
+        // at the code step.
+        router.replace(result.mfaRequired ? "/login" : "/");
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't reset the password.");
