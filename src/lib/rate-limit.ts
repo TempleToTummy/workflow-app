@@ -75,4 +75,10 @@ export const LIMITS = {
   PASSWORD_RESET: { limit: 5, windowMs: 60 * 60_000 },
   // Per token. Reset tokens are 256-bit, so this is belt and braces.
   RESET_REDEEM: { limit: 10, windowMs: 15 * 60_000 },
+  // Per account, across sign-in challenges. A 6-digit code is a million
+  // possibilities; this keeps guessing one hopeless even across many
+  // password-correct attempts.
+  MFA: { limit: 10, windowMs: 15 * 60_000 },
+  // Per account, for re-entering a password on the Account page.
+  REAUTH: { limit: 10, windowMs: 15 * 60_000 },
 } as const;

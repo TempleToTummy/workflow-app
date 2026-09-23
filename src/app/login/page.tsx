@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, readLoginChallenge } from "@/lib/auth";
 
 export default async function LoginPage({
   searchParams,
@@ -18,6 +18,9 @@ export default async function LoginPage({
   const { next } = await searchParams;
   // Only keep an app-internal path.
   const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  // A password-correct, code-pending sign-in (from this form, or from a
+  // password reset on a two-factor account) resumes at the code step.
+  const pending = await readLoginChallenge();
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -31,9 +34,11 @@ export default async function LoginPage({
         <div className="rounded-lg border border-line bg-surface p-6 shadow-sm">
           <h1 className="text-lg font-semibold tracking-tight text-ink">Sign in</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Use the email and password for your account.
+            {pending
+              ? "Your password is confirmed. One more step."
+              : "Use the email and password for your account."}
           </p>
-          <LoginForm next={safeNext} />
+          <LoginForm next={safeNext} initialStep={pending ? "code" : "password"} />
         </div>
       </div>
     </div>

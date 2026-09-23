@@ -3,7 +3,17 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { createSession, destroySession, getCurrentUser } from "@/lib/auth";
+import {
+  createSession,
+  destroySession,
+  getCurrentUser,
+  createLoginChallenge,
+  readLoginChallenge,
+  clearLoginChallenge,
+  MAX_CHALLENGE_ATTEMPTS,
+} from "@/lib/auth";
+import { verifyTotp, consumeRecoveryCode, normalizeTotpInput } from "@/lib/totp";
+import { unseal } from "@/lib/secret-box";
 import {
   hashPassword,
   verifyPassword,
@@ -59,6 +69,15 @@ export async function login(data: { email: string; password: string }) {
   }
 
   clearRateLimit(`login:${email}`);
+
+  // Two-factor accounts stop here: the password was right, but no session is
+  // created until the code is. The browser gets a short-lived challenge
+  // cookie instead and the form moves on to ask for the code.
+  if (employee!.totpEnabledAt) {
+    await createLoginChallenge(employee!.id);
+    return { ok: true as const, mfaRequired: true as const };
+  }
+
   await createSession(employee!.id);
   await recordAudit({
     entityType: "Employee",
@@ -69,6 +88,113 @@ export async function login(data: { email: string; password: string }) {
     actor: { id: employee!.id, label: `${employee!.firstName} ${employee!.lastName}` },
   });
 
+  return { ok: true as const, mfaRequired: false as const };
+}
+
+const CHALLENGE_EXPIRED = "Your sign-in timed out. Enter your email and password again.";
+
+// Step two of a two-factor sign-in: a 6-digit code from the authenticator
+// app, or one of the single-use recovery codes.
+export async function verifyLoginCode(data: { code: string }) {
+  const challenge = await readLoginChallenge();
+  if (!challenge) throw new Error(CHALLENGE_EXPIRED);
+  const employee = challenge.employee;
+  const name = `${employee.firstName} ${employee.lastName}`;
+
+  const limit = rateLimit(`mfa:${employee.id}`, LIMITS.MFA);
+  if (!limit.ok || challenge.attempts >= MAX_CHALLENGE_ATTEMPTS) {
+    await clearLoginChallenge();
+    throw new Error(
+      limit.ok
+        ? "Too many wrong codes. Sign in again to get a fresh attempt."
+        : `Too many wrong codes. Try again in ${Math.ceil(limit.retryAfterSeconds / 60)} minute(s).`
+    );
+  }
+  if (!employee.totpEnabledAt || !employee.totpSecret) {
+    // 2FA was turned off (e.g. reset by an admin) mid-sign-in.
+    await clearLoginChallenge();
+    throw new Error(CHALLENGE_EXPIRED);
+  }
+
+  const input = data.code.trim();
+  let method: "totp" | "recovery" | null = null;
+  let remainingCodes: number | null = null;
+
+  if (normalizeTotpInput(input)) {
+    const result = verifyTotp(unseal(employee.totpSecret), input, {
+      lastUsedStep: employee.totpLastUsedStep,
+    });
+    if (result.ok) {
+      // Conditional on the step still being older, so two tabs racing with
+      // the same code can't both win.
+      const updated = await prisma.employee.updateMany({
+        where: {
+          id: employee.id,
+          OR: [{ totpLastUsedStep: null }, { totpLastUsedStep: { lt: result.step } }],
+        },
+        data: { totpLastUsedStep: result.step },
+      });
+      if (updated.count === 1) method = "totp";
+    }
+  } else {
+    const remaining = consumeRecoveryCode(employee.recoveryCodeHashes, input);
+    if (remaining) {
+      const updated = await prisma.employee.updateMany({
+        where: { id: employee.id, recoveryCodeHashes: employee.recoveryCodeHashes },
+        data: { recoveryCodeHashes: JSON.stringify(remaining) },
+      });
+      if (updated.count === 1) {
+        method = "recovery";
+        remainingCodes = remaining.length;
+      }
+    }
+  }
+
+  if (!method) {
+    await prisma.loginChallenge.update({
+      where: { id: challenge.id },
+      data: { attempts: { increment: 1 } },
+    });
+    await recordAudit({
+      entityType: "Employee",
+      entityId: employee.id,
+      action: AUDIT.MFA_FAILED,
+      summary: `Wrong two-factor code entered for ${name}`,
+      contextLabel: name,
+      actor: { id: null, label: ANONYMOUS_ACTOR },
+    });
+    throw new Error("That code didn't work. Check your authenticator app and try again.");
+  }
+
+  await clearLoginChallenge();
+  clearRateLimit(`mfa:${employee.id}`);
+  await createSession(employee.id);
+  const actor = { id: employee.id, label: name };
+  if (method === "recovery") {
+    await recordAudit({
+      entityType: "Employee",
+      entityId: employee.id,
+      action: AUDIT.RECOVERY_CODE_USED,
+      summary: `${name} signed in with a recovery code — ${remainingCodes} left`,
+      contextLabel: name,
+      actor,
+    });
+  }
+  await recordAudit({
+    entityType: "Employee",
+    entityId: employee.id,
+    action: AUDIT.LOGIN_SUCCEEDED,
+    summary: `${name} signed in (two-factor${method === "recovery" ? ", recovery code" : ""})`,
+    contextLabel: name,
+    actor,
+  });
+
+  return { ok: true as const, remainingRecoveryCodes: remainingCodes };
+}
+
+// "Back" on the code step, so an abandoned half-sign-in doesn't linger.
+export async function cancelLoginChallenge() {
+  await clearLoginChallenge();
   return { ok: true as const };
 }
 
@@ -279,8 +405,15 @@ export async function resetPassword(data: { token: string; password: string }) {
   });
 
   clearRateLimit(`login:${employee.email}`);
+  // A reset link proves access to the mailbox, not to the phone. With 2FA on,
+  // the new password gets them as far as the code step and no further —
+  // otherwise a compromised inbox would be enough to take the account.
+  if (employee.totpEnabledAt) {
+    await createLoginChallenge(employee.id);
+    return { ok: true as const, mfaRequired: true as const };
+  }
   await createSession(employee.id);
-  return { ok: true as const };
+  return { ok: true as const, mfaRequired: false as const };
 }
 
 // Admin-side fallback: mint a reset link to hand over directly.

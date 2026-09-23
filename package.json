@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-core-rules.ts && tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts && tsx scripts/test-organize.ts && tsx scripts/test-bulk.ts && tsx scripts/test-backup.ts",
+    "test": "tsx scripts/test-core-rules.ts && tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts && tsx scripts/test-organize.ts && tsx scripts/test-bulk.ts && tsx scripts/test-backup.ts && tsx scripts/test-security.ts && tsx scripts/test-search.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:backup": "tsx --env-file=.env scripts/backup.ts",
@@ -16,6 +16,7 @@
   "dependencies": {
     "@prisma/client": "^6.0.0",
     "next": "16.3.1",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

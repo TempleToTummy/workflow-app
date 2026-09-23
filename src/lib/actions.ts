@@ -772,8 +772,15 @@ export async function revokeAccess(employeeId: string) {
         resetTokenHash: null,
         resetTokenExpiresAt: null,
         passwordChangedAt: new Date(),
+        // A re-invited person starts clean: their old authenticator entry
+        // shouldn't be what stands between them and a fresh account.
+        totpSecret: null,
+        totpEnabledAt: null,
+        totpLastUsedStep: null,
+        recoveryCodeHashes: null,
       },
     }),
+    prisma.loginChallenge.deleteMany({ where: { employeeId } }),
   ]);
 
   await recordAudit({
