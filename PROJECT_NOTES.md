@@ -160,7 +160,7 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
     /admin/projects, which is still the catalog CRUD.
   - /tasks: every ClientActivity in an active assignment's current period,
     one row per step, reusing FilterBar (status/client/assignee).
-- Project builder (FinancialCents-style, any signed-in user, not admin-only):
+- Project builder (FinancialCents-style; admin-only since Tier 3 — see below):
   - /projects/new creates a project (name, description, cadence) via
     createOwnProject and lands on /projects/[projectId].
   - /projects/[projectId] now has the checklist builder
@@ -265,10 +265,9 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   - Reports are admin-only now (src/app/reports/layout.tsx uses
     requireAdmin; the sidebar hides the Reports group for employees) —
     every report is a firm-wide view and would leak the rest.
-  - Not scoped: the per-step assignee dropdown and Assignees panel on the
-    assignment page still let an employee reassign steps they can see, and
-    server actions still only check requireUser(). Tighten those if "can
-    see" needs to become "can't touch".
+  - Writes are scoped too now (Tier 3, below): server actions check the same
+    engagement/client access the pages do. Reassigning steps within an
+    engagement you're on is still allowed — that's a handoff, not a leak.
 - The client page's Add-to-project picker was reworked from a native
   <select> to a toggle button that opens a searchable card grid (name,
   cadence, step count, one-click Add); projects with no tasks show as
@@ -670,6 +669,120 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
       redirect still fires and NO page data is rendered (verified: the body
       contains no workload content), but a non-browser client sees a 200.
 
+- Tier 3 (authorization on writes, global search, bulk actions, groups/tags/
+  saved views, archive + backup/restore, tests for the core rules, 2FA and
+  session management). The decisions:
+
+  - Authorization on writes. Before this every action called requireUser()
+    only, so an employee could change any record whose id they could guess or
+    remembered from an old assignment. Verified by capturing a real
+    server-action request in a browser and replaying it with another client's
+    task id: it is now refused and nothing changes.
+    - The policy is src/lib/permissions.ts (pure, tested): "engagement" = has a
+      task on that client + project in any period (identical to the assignment
+      page's gate, so past periods stay workable); "client" = has a task for
+      that client; "admin" = firm structure. src/lib/access.ts enforces it and
+      is deliberately NOT "use server" (exports there become endpoints).
+    - The require* helpers THROW rather than redirect: a redirect from inside
+      an action navigates away with no explanation, a throw shows next to the
+      control. The message is the same whether the record is missing or just
+      not yours, so errors can't confirm which ids exist.
+    - Firm structure became admin-only: creating/archiving/deleting clients,
+      assigning services, and every template edit (checklist builder, due
+      rule, step owner, estimate). A template edit changes the work of every
+      client on the service, including ones the editor can't see — and an
+      employee who created a project was redirected away from it by the
+      visibility scope anyway, so the old "any signed-in user" builder only
+      really worked for admins. Employees get a read-only checklist.
+    - Ids that arrive with a request are never trusted for context: note
+      author and file uploader come from the session (the Author/Uploader
+      pickers let anyone post as a colleague), subtask/contact/note/request
+      ids are resolved to their engagement before the check.
+    - Read leaks closed on the way: document downloads (any id), the client
+      edit page (no gate at all), the email template preview (read another
+      client's open-task count), the timesheet client picker (whole firm), and
+      the client page's file list (files from services you're not on).
+    - recomputeDueDates was an exported server action with no guard; it is
+      internal now. maybeRollPeriodForward moved to src/lib/rollover.ts so the
+      bulk path can share it without it becoming an endpoint.
+
+  - Global search (/search, sidebar box, "/" shortcut). Every group is scoped
+    like the page it links to — employees search only their engagements'
+    tasks, comments, notes and files, clients they work with, and mail per
+    messageScope. Uses `contains` (SQLite LIKE is case-insensitive for ASCII;
+    `mode: "insensitive"` is added only when DATABASE_URL is Postgres, because
+    SQLite's client rejects it). Highlighting is done by string search, not a
+    regex built from user input.
+
+  - Bulk actions. The interesting part is bulk Done: src/lib/bulk.ts simulates
+    each engagement-period in sequence order, so steps 1-2-3 selected together
+    all pass, and a step still blocked is skipped with the name of the step it
+    waits on — never a partial silent success or an all-or-nothing failure.
+    Dashboard bulk assign touches OPEN steps only; reassigning finished work
+    would rewrite who is credited with it. Every changed row gets its own audit
+    entry. Capped at 500 rows per request.
+
+  - Groups, tags, saved views. Client.groupName is used as-is (one group per
+    client) — no new model, and existing data works immediately. Tags are a
+    Tag/ClientTag many-to-many with a fixed colour palette (a stored palette
+    key, never raw CSS). Tag names are unique case-insensitively in code, since
+    SQLite's unique index is case-sensitive. Tag/group options in filters are
+    scoped for employees — a tag name can itself say something about a client.
+    SavedView stores the page's query string, sanitized to that page's filter
+    keys in canonical order (which is also how the menu knows which view is
+    active). Only admins can share a view; everyone manages their own.
+
+  - Archive (soft delete) + backup/restore.
+    - Client.archivedAt. Archived clients are filtered out of every working
+      view, report and export (history pages — activity log, time summary —
+      keep them), the scheduler and rollover skip them, and open client-request
+      links are revoked on archive (restore does NOT reopen them; re-issue if
+      needed). Restore fast-forwards each recurring engagement to the current
+      period instead of letting the scheduler generate every archived month as
+      overdue work. deleteClient now requires archived + zero history of any
+      kind (tasks, services, files, time, email, requests, notes).
+    - Backups are JSON, not a SQLite file copy, so they survive the Postgres
+      move. Table order is FK order (tested); restore is delete-all + insert in
+      ONE transaction — verified that a file with a broken foreign key leaves
+      the database byte-for-byte unchanged, and that backup → restore → backup
+      is identical across all 27 tables. A snapshot of current data is written
+      before every restore. Sessions/login challenges are never backed up and
+      are wiped on restore; invite and reset tokens are stripped on export so
+      old links don't come back to life.
+    - /api/backup is excluded from src/proxy.ts's matcher because the proxy
+      buffers bodies and truncates past 10 MB, which would corrupt a restore
+      upload. The route checks for an admin session itself.
+
+  - Tests. scripts/test-core-rules.ts covers canMarkDone, deriveAssignmentStatus,
+    progressLabel, dueBucket (Sunday/Monday edges, month/year boundaries, run
+    under several timezones), matchesDueFilter, nextPeriodName (Dec→Jan, Q4→Q1,
+    12 steps = 1 year), period ranges (leap years) and isPeriodBefore. The pure
+    period functions moved to src/lib/period-names.ts so they import without
+    Prisma; periods.ts re-exports them. New suites for bulk planning,
+    tags/groups/views, backup format, 2FA/secret box, search. 550 assertions.
+
+  - 2FA and sessions.
+    - TOTP is implemented on node:crypto (RFC 6238, checked against the RFC's
+      own vectors). One new dependency: `qrcode`, for the setup QR code.
+    - Setup is two-step: the secret is stored but not enforced until a first
+      code proves the app works, so a mis-scan can't lock anyone out.
+    - Sign-in: a correct password on a 2FA account creates a LoginChallenge
+      (SHA-256-hashed token in a 10-minute httpOnly cookie), never a Session.
+      Codes can't be replayed (totpLastUsedStep, updated conditionally so two
+      racing tabs can't both win). Wrong codes: 5 per challenge, 10 per 15 min
+      per account, each audited.
+    - Recovery codes: 10, ~50 bits each, no look-alike characters, SHA-256
+      hashed (enough given the rate limit — same reasoning as reset tokens).
+    - A password reset on a 2FA account stops at the code step: a reset link
+      proves the mailbox, not the phone.
+    - Secrets are AES-256-GCM sealed with a key derived from AUTH_SECRET;
+      without it they're stored "plain:" and the Account page says so.
+    - Sessions record user agent + IP; lastSeenAt is touched at most every 5
+      minutes (fire-and-forget, never fails a page). Session ids are only ever
+      deleted scoped to the caller's own employeeId.
+    - Anything that weakens an account (2FA off, new recovery codes, password
+      change) re-asks for the password. Revoking access clears 2FA too.
+
 ## Known gaps / things to be careful about
 - CorpContact.ssnEncrypted is a placeholder field name only: real SSNs must
   never go in there until actual encryption is implemented, so the contact
@@ -730,6 +843,16 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
 - EMAIL_INBOUND_SECRET and the other mail settings are in .env, which is NOT
   gitignored (only .env*.local is). Same caveat as CRON_SECRET: set real values
   as deployment environment variables.
+- 2FA is recommended to admins, not enforced. Changing AUTH_SECRET after people
+  enrol makes their secrets unreadable (they'd need an admin Reset 2FA).
+- Backups aren't encrypted and nothing schedules them — `npm run db:backup` is
+  built for cron. The format is versioned (BACKUP_VERSION); a future schema
+  change needs a migration step in restoreBackup for older files.
+- Search is `contains`-based. Fine for a firm-sized SQLite database; Postgres at
+  scale would want a trigram or full-text index.
+- Bulk and search share the in-memory rate limiter's caveats (per process).
+- next@16.3.1 has a published security advisory (`npm audit`); upgrading Next is
+  a separate change from this work.
 - The scheduler has no locking beyond the in-process `inFlight` guard in
   ensurePeriodsCurrent. Two instances running the job at the same moment is
   safe (every write is a diff against existing rows) but would both log a run.

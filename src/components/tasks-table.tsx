@@ -169,7 +169,7 @@ export function TasksTable({
                     type="checkbox"
                     checked={sel.isSelected(r.id)}
                     onChange={() => sel.toggle(r.id)}
-                    aria-label={`Select ${r.clientName} · ${r.step}`}
+                    aria-label={`Select ${r.clientName} · ${r.projectName} · ${r.step}`}
                   />
                 </td>
                 <td className="px-4 py-3 align-middle text-ink-muted">{r.clientName}</td>

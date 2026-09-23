@@ -274,7 +274,7 @@ export function TwoFactorCard({
                   autoComplete="one-time-code"
                   maxLength={7}
                   placeholder="123 456"
-                  className={`${inputClass} w-36 tracking-widest`}
+                  className="mt-1 w-36 rounded-md border border-line bg-surface px-3 py-2 text-sm tracking-widest text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
                 />
               </label>
               <button type="submit" disabled={isPending} className={primary}>

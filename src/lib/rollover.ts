@@ -16,9 +16,13 @@ import { openPeriodForAssignment } from "@/lib/scheduler";
 export async function maybeRollPeriodForward(clientId: string, projectId: string, periodName: string) {
   const assignment = await prisma.projectClientMap.findUnique({
     where: { clientId_projectId: { clientId, projectId } },
+    include: { client: { select: { archivedAt: true } } },
   });
   // Already rolled past this period (or the assignment is gone) — nothing to do.
   if (!assignment || assignment.currentPeriod !== periodName) return;
+  // An archived client gets no new work, however its last period was closed;
+  // restoring it resumes from the current period (restoreClient in actions.ts).
+  if (assignment.client.archivedAt) return;
 
   const siblings = await prisma.clientActivity.findMany({
     where: { clientId, projectId, periodName },
