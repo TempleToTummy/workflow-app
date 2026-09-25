@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-core-rules.ts && tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts && tsx scripts/test-organize.ts && tsx scripts/test-bulk.ts && tsx scripts/test-backup.ts && tsx scripts/test-security.ts && tsx scripts/test-search.ts && tsx scripts/test-ktax-import.ts",
+    "test": "tsx scripts/test-core-rules.ts && tsx scripts/test-workflow-rules.ts && tsx scripts/test-email.ts && tsx scripts/test-time-tracking.ts && tsx scripts/test-discussion.ts && tsx scripts/test-export.ts && tsx scripts/test-client-requests.ts && tsx scripts/test-organize.ts && tsx scripts/test-bulk.ts && tsx scripts/test-backup.ts && tsx scripts/test-security.ts && tsx scripts/test-search.ts && tsx scripts/test-ktax-import.ts && tsx scripts/test-work-summary.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:backup": "tsx --env-file=.env scripts/backup.ts",

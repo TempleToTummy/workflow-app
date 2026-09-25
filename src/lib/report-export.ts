@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { currentPeriodNames } from "@/lib/work-summary";
 import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
 import { STATUS_WORDS } from "@/lib/audit";
 import { resolveRange, toDecimalHours, realizationPercent, isTimeRange } from "@/lib/time";
@@ -62,22 +63,21 @@ export type ExportContext = {
 // The current-period activity rows for every active engagement, which four of
 // the reports all need. Read once per export rather than per row.
 async function currentPeriodIndex() {
-  const [assignments, activities] = await Promise.all([
-    prisma.projectClientMap.findMany({
-      where: { active: true, client: { archivedAt: null } },
-      include: { client: true },
-    }),
-    prisma.clientActivity.findMany({
-      where: { client: { archivedAt: null } },
-      select: {
-        clientId: true,
-        projectId: true,
-        periodName: true,
-        status: true,
-        taskSeqNo: true,
-      },
-    }),
-  ]);
+  const assignments = await prisma.projectClientMap.findMany({
+    where: { active: true, client: { archivedAt: null } },
+    include: { client: true },
+  });
+  const activities = await prisma.clientActivity.findMany({
+    // Only current periods are ever looked up below.
+    where: { periodName: { in: currentPeriodNames(assignments) }, client: { archivedAt: null } },
+    select: {
+      clientId: true,
+      projectId: true,
+      periodName: true,
+      status: true,
+      taskSeqNo: true,
+    },
+  });
 
   const byPair = new Map<string, { status: string; taskSeqNo: number }[]>();
   for (const a of activities) {
@@ -100,21 +100,27 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
     label: "Project Activity List",
     scope: "admin",
     async build() {
-      const rows = await prisma.clientActivity.findMany({
-        where: { client: { archivedAt: null } },
-        include: {
-          client: { select: { companyName: true } },
-          project: { select: { name: true } },
-          subTask: { select: { name: true } },
-          assignee: { select: { firstName: true, lastName: true } },
-          completedBy: { select: { firstName: true, lastName: true } },
-        },
-        orderBy: [
-          { client: { companyName: "asc" } },
-          { periodName: "desc" },
-          { taskSeqNo: "asc" },
-        ],
-      });
+      // Every task row there is (the whole KTAX history), so plain columns
+      // only, with names filled in from the small lookup tables: attaching
+      // five related records to each of ~100k rows was most of the time.
+      const [rows, clients, projects, steps, employees] = await Promise.all([
+        prisma.clientActivity.findMany({
+          where: { client: { archivedAt: null } },
+          orderBy: [
+            { client: { companyName: "asc" } },
+            { periodName: "desc" },
+            { taskSeqNo: "asc" },
+          ],
+        }),
+        prisma.client.findMany({ select: { id: true, companyName: true } }),
+        prisma.project.findMany({ select: { id: true, name: true } }),
+        prisma.projectSubTask.findMany({ select: { id: true, name: true } }),
+        prisma.employee.findMany({ select: { id: true, firstName: true, lastName: true } }),
+      ]);
+      const clientName = new Map(clients.map((c) => [c.id, c.companyName]));
+      const projectName = new Map(projects.map((p) => [p.id, p.name]));
+      const stepName = new Map(steps.map((s) => [s.id, s.name]));
+      const personName = new Map(employees.map((e) => [e.id, `${e.firstName} ${e.lastName}`]));
 
       return {
         headers: [
@@ -138,18 +144,18 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
         // off, when, whether the date was overridden) are exactly the ones
         // the page leaves out for space.
         rows: rows.map((a) => [
-          a.client.companyName,
+          clientName.get(a.clientId) ?? "",
           a.periodName,
-          a.project.name,
-          a.subTask.name,
+          projectName.get(a.projectId) ?? "",
+          stepName.get(a.subTaskId) ?? "",
           a.taskSeqNo,
           STATUS_WORDS[a.status] ?? a.status,
           a.dueDate,
           a.dueDateOverridden,
-          a.assignee ? `${a.assignee.firstName} ${a.assignee.lastName}` : "",
+          a.assigneeId ? personName.get(a.assigneeId) ?? "" : "",
           a.estimatedMinutes === null ? "" : toDecimalHours(a.estimatedMinutes),
           a.completedAt,
-          a.completedBy ? `${a.completedBy.firstName} ${a.completedBy.lastName}` : "",
+          a.completedById ? personName.get(a.completedById) ?? "" : "",
           a.notes,
         ]),
       };

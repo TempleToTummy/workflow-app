@@ -2,7 +2,8 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { FilterBar } from "@/components/filter-bar";
 import { AdminActivityRow } from "@/components/admin-activity-row";
-import type { ActivityStatus } from "@prisma/client";
+import { Pager, PAGE_SIZE, pageFromParams } from "@/components/pager";
+import type { ActivityStatus, Prisma } from "@prisma/client";
 
 export default async function AdminClientActivityPage({
   searchParams,
@@ -14,19 +15,31 @@ export default async function AdminClientActivityPage({
   const clientFilter = params.clientId;
   const assigneeFilter = params.assigneeId;
 
-  const [activities, clients, employees] = await Promise.all([
+  // Filtered, counted and paged in the database: this table is every task
+  // row there is (the whole KTAX history), far too many to send at once.
+  const where: Prisma.ClientActivityWhereInput = {
+    ...(statusFilter ? { status: statusFilter } : {}),
+    ...(clientFilter ? { clientId: clientFilter } : {}),
+    ...(assigneeFilter ? { assigneeId: assigneeFilter } : {}),
+  };
+  const total = await prisma.clientActivity.count({ where });
+  const page = pageFromParams(params.page, total);
+
+  const [rows, clients, employees] = await Promise.all([
     prisma.clientActivity.findMany({
-      include: { client: true, project: true, subTask: true },
+      where,
+      include: {
+        client: { select: { companyName: true } },
+        project: { select: { name: true } },
+        subTask: { select: { name: true } },
+      },
       orderBy: [{ clientId: "asc" }, { projectId: "asc" }, { periodName: "desc" }, { taskSeqNo: "asc" }],
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
     }),
-    prisma.client.findMany({ orderBy: { companyName: "asc" } }),
+    prisma.client.findMany({ orderBy: { companyName: "asc" }, select: { id: true, companyName: true } }),
     prisma.employee.findMany({ orderBy: { firstName: "asc" } }),
   ]);
-
-  const rows = activities
-    .filter((a) => !statusFilter || a.status === statusFilter)
-    .filter((a) => !clientFilter || a.clientId === clientFilter)
-    .filter((a) => !assigneeFilter || a.assigneeId === assigneeFilter);
 
   const employeeOptions = employees.map((e) => ({
     id: e.id,
@@ -103,6 +116,8 @@ export default async function AdminClientActivityPage({
           </tbody>
         </table>
       </div>
+
+      <Pager path="/admin/client-activity" params={params} page={page} total={total} noun={["task", "tasks"]} />
     </div>
   );
 }

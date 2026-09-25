@@ -4,7 +4,8 @@ import { FilterBar } from "@/components/filter-bar";
 import { DashboardTable, type DashboardRow } from "@/components/dashboard-table";
 import { SavedViewsMenu } from "@/components/saved-views-menu";
 import { DueSummaryCards } from "@/components/due-summary-cards";
-import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
+import { periodSummaries, summaryStatus, type PeriodSummary } from "@/lib/work-summary";
+import { Pager, PAGE_SIZE, pageFromParams } from "@/components/pager";
 import {
   dueDateUrgency,
   dueBucket,
@@ -50,7 +51,7 @@ export default async function DashboardPage({
   const view: View =
     params.view === "open" || params.view === "completed" ? params.view : "all";
 
-  const [assignments, allActivities, periods, clients, employees, clientGroups, tags, views] = await Promise.all([
+  const [assignments, summaries, periods, clients, employees, clientGroups, tags, views] = await Promise.all([
     // Every engagement, including ones marked inactive — a finished one-time
     // project is inactive but still belongs under Completed. Archived clients
     // are off the board entirely (they're under Clients → Archived).
@@ -58,10 +59,9 @@ export default async function DashboardPage({
       where: { client: { archivedAt: null } },
       include: { client: { include: { tags: { select: { tagId: true } } } }, project: true },
     }),
-    prisma.clientActivity.findMany({
-      where: { client: { archivedAt: null } },
-      include: { assignee: true, subTask: true },
-    }),
+    // One summary per client + project + period, computed in the database
+    // (src/lib/work-summary.ts) rather than loading every task row.
+    periodSummaries({ mine }),
     prisma.accountingPeriod.findMany(),
     prisma.client.findMany({
       // The Client chip must not list clients an employee can't see.
@@ -79,50 +79,40 @@ export default async function DashboardPage({
 
   const periodByName = new Map(periods.map((p) => [p.name, p]));
   const assignmentByKey = new Map(assignments.map((a) => [`${a.clientId}:${a.projectId}`, a]));
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
 
   // One dashboard row per client + project + period. A finished period stays
   // on the board as its own completed row; the period that rolled forward is
   // a separate, fresh row. Nothing is reset or overwritten by rollover.
-  const groups = new Map<string, typeof allActivities>();
-  for (const act of allActivities) {
-    const key = `${act.clientId}:${act.projectId}:${act.periodName}`;
-    const list = groups.get(key);
-    if (list) list.push(act);
-    else groups.set(key, [act]);
-  }
+  const groups = new Map<string, PeriodSummary | null>();
+  for (const s of summaries) groups.set(`${s.clientId}:${s.projectId}:${s.periodName}`, s);
   // An engagement whose current period has no task rows yet still shows up.
   for (const a of assignments) {
     if (!a.currentPeriod) continue;
     const key = `${a.clientId}:${a.projectId}:${a.currentPeriod}`;
-    if (!groups.has(key)) groups.set(key, []);
+    if (!groups.has(key)) groups.set(key, null);
   }
 
   const visible = [...groups.entries()]
-    .flatMap(([key, acts]) => {
+    .flatMap(([key, summary]) => {
       const [clientId, projectId, periodName] = key.split(":");
       const a = assignmentByKey.get(`${clientId}:${projectId}`);
       if (!a) return [];
       // Employees only see periods where at least one step is theirs.
-      if (mine && !acts.some((act) => act.assigneeId === mine)) return [];
-      const status = deriveAssignmentStatus(acts);
-      const completed = acts.length > 0 && status === "DONE";
+      if (mine && !summary?.hasMine) return [];
+      const totalCount = summary?.total ?? 0;
+      const doneCount = summary?.done ?? 0;
+      const status = summary ? summaryStatus(summary) : "NOT_STARTED";
+      const completed = totalCount > 0 && status === "DONE";
       const isCurrent = a.currentPeriod === periodName;
-      const sorted = [...acts].sort((x, y) => x.taskSeqNo - y.taskSeqNo);
-      const activeTask = sorted.find((act) => act.status !== "DONE") ?? sorted[sorted.length - 1];
+      // The step that decides the row: the first one not done, or the last
+      // one once everything is.
+      const activeAssignee = summary?.repAssigneeId ? employeeById.get(summary.repAssigneeId) : undefined;
       // The row's due date is the next thing actually owed on it: the earliest
       // open step's deadline. Once everything is done it's the last deadline
       // the engagement had. Steps can carry their own milestone offsets, so
       // this is no longer the same date for every row in a period.
-      const open = sorted.filter((act) => act.status !== "DONE" && act.dueDate);
-      const dated = sorted.filter((act) => act.dueDate);
-      const dueDate =
-        (open.length > 0
-          ? open.reduce((min, act) => (act.dueDate! < min.dueDate! ? act : min)).dueDate
-          : dated.length > 0
-          ? dated.reduce((max, act) => (act.dueDate! > max.dueDate! ? act : max)).dueDate
-          : periodByName.get(periodName)?.endDate) ?? null;
-      const doneCount = acts.filter((act) => act.status === "DONE").length;
-      const totalCount = acts.length;
+      const dueDate = summary?.openDue ?? summary?.lastDue ?? periodByName.get(periodName)?.endDate ?? null;
       const base = `/assignments/${clientId}/${projectId}`;
       return [
         {
@@ -138,13 +128,13 @@ export default async function DashboardPage({
           projectName: a.project.name,
           period: periodName,
           status,
-          progress: progressLabel(acts),
+          progress: `${doneCount}/${totalCount}`,
           progressPct: totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0,
           dueDate,
-          assigneeName: activeTask?.assignee
-            ? `${activeTask.assignee.firstName} ${activeTask.assignee.lastName}`
+          assigneeName: activeAssignee
+            ? `${activeAssignee.firstName} ${activeAssignee.lastName}`
             : "Unassigned",
-          assigneeId: activeTask?.assigneeId ?? null,
+          assigneeId: summary?.repAssigneeId ?? null,
           due: dueBucket(dueDate, status),
         },
       ];
@@ -184,7 +174,7 @@ export default async function DashboardPage({
 
   const otherParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (key !== "due" && value) otherParams.set(key, value);
+    if (key !== "due" && key !== "page" && value) otherParams.set(key, value);
   }
 
   const byDueAsc = (a: { dueDate: Date | null }, b: { dueDate: Date | null }) => {
@@ -196,8 +186,13 @@ export default async function DashboardPage({
   // Most recently finished first.
   const completedRows = visible.filter((r) => r.completed).sort((a, b) => -byDueAsc(a, b));
 
-  const rows =
+  const allRows =
     view === "open" ? openRows : view === "completed" ? completedRows : [...openRows, ...completedRows];
+  // Only one page of rows goes to the browser. Every count above still covers
+  // the whole board.
+  const page = pageFromParams(params.page, allRows.length);
+  const pageStart = (page - 1) * PAGE_SIZE;
+  const rows = allRows.slice(pageStart, pageStart + PAGE_SIZE);
   const viewCounts: Record<View, number> = {
     all: visible.length,
     open: openRows.length,
@@ -207,14 +202,18 @@ export default async function DashboardPage({
   function viewHref(id: View): string {
     const p = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (key !== "view" && value) p.set(key, value);
+      if (key !== "view" && key !== "page" && value) p.set(key, value);
     }
     if (id !== "all") p.set("view", id);
     const q = p.toString();
     return q ? `/?${q}` : "/";
   }
 
-  const firstCompletedIndex = view === "all" ? openRows.length : -1;
+  // Where the "Completed" divider falls on THIS page, if it falls on it at all.
+  const firstCompletedIndex =
+    view === "all" && openRows.length >= pageStart && openRows.length < pageStart + PAGE_SIZE
+      ? openRows.length - pageStart
+      : -1;
 
   const tableRows: DashboardRow[] = rows.map((r) => ({
     key: `${r.clientId}:${r.projectId}:${r.periodName}`,
@@ -302,7 +301,7 @@ export default async function DashboardPage({
           tags={tags.map((t) => ({ value: t.id, label: t.name }))}
           trailing={
             <span className="whitespace-nowrap text-sm text-ink-muted">
-              {rows.length} {rows.length === 1 ? "project" : "projects"}
+              {allRows.length} {allRows.length === 1 ? "project" : "projects"}
             </span>
           }
         />
@@ -315,6 +314,8 @@ export default async function DashboardPage({
         emptyMessage={view === "completed" ? "Nothing completed yet." : "No work matches these filters."}
         employees={employees.map((e) => ({ value: e.id, label: `${e.firstName} ${e.lastName}` }))}
       />
+
+      <Pager path="/" params={params} page={page} total={allRows.length} noun={["project", "projects"]} />
     </div>
   );
 }

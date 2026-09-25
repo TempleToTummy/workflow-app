@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { currentPeriodWork } from "@/lib/work-summary";
 import { StatusBadge } from "@/components/status-badge";
 import { deriveAssignmentStatus } from "@/lib/workflow";
 import { ReportHeader } from "@/components/report-header";
@@ -12,12 +13,13 @@ export default async function ClientActivityMatrixPage({
   const { all } = await searchParams;
   const showAll = all === "1";
 
-  const [clients, projects, assignments, activities] = await Promise.all([
+  const [clients, projects, assignments] = await Promise.all([
     prisma.client.findMany({ where: { archivedAt: null }, orderBy: { companyName: "asc" } }),
     prisma.project.findMany({ orderBy: { name: "asc" } }),
     prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
-    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
+  // Each engagement's current-period rows, read once and indexed (src/lib/work-summary.ts).
+  const workFor = await currentPeriodWork(assignments);
 
   const assignmentByPair = new Map(
     assignments.map((a) => [`${a.clientId}__${a.projectId}`, a])
@@ -26,12 +28,7 @@ export default async function ClientActivityMatrixPage({
   function statusFor(clientId: string, projectId: string) {
     const assignment = assignmentByPair.get(`${clientId}__${projectId}`);
     if (!assignment) return null;
-    const rows = activities.filter(
-      (act) =>
-        act.clientId === clientId &&
-        act.projectId === projectId &&
-        act.periodName === assignment.currentPeriod
-    );
+    const rows = workFor(assignment);
     return deriveAssignmentStatus(rows);
   }
 

@@ -6,6 +6,8 @@ import { dueDateUrgency, dueBucket, matchesDueFilter, DUE_FILTERS, type DueFilte
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { clientGroupNames, visibleTags, savedViewsFor } from "@/lib/client-options";
 import { matchesClientFilters } from "@/lib/client-filters";
+import { currentPeriodNames, engagementKey } from "@/lib/work-summary";
+import { Pager, PAGE_SIZE, pageFromParams } from "@/components/pager";
 import type { ActivityStatus } from "@prisma/client";
 
 export default async function TasksPage({
@@ -26,19 +28,37 @@ export default async function TasksPage({
     : null;
   const query = (params.q ?? "").trim().toLowerCase();
 
-  const [assignments, activities, clients, employees, periods, groups, tags, views] = await Promise.all([
-    // Archived clients are off the books: their work doesn't appear here.
-    prisma.projectClientMap.findMany({
-      where: { active: true, client: { archivedAt: null } },
-      include: { project: { select: { id: true, name: true } } },
-    }),
+  // Only the active engagements' current periods are on this page, and there
+  // are only a handful of distinct current period names at any time, so the
+  // task query is narrowed to those periods in the database instead of loading
+  // the whole task history. Names come from the small lookup tables rather
+  // than a join per row.
+  const assignments = await prisma.projectClientMap.findMany({
+    where: { active: true, client: { archivedAt: null } },
+    select: { clientId: true, projectId: true, currentPeriod: true, project: { select: { id: true, name: true } } },
+  });
+
+  const [activities, clients, lookupClients, projects, steps, employees, periods, groups, tags, views] = await Promise.all([
     prisma.clientActivity.findMany({
-      where: { client: { archivedAt: null } },
-      include: {
-        client: { include: { tags: { select: { tagId: true } } } },
-        project: true,
-        subTask: true,
-        assignee: true,
+      where: {
+        periodName: { in: currentPeriodNames(assignments) },
+        client: { archivedAt: null },
+        ...(statusFilter ? { status: statusFilter } : {}),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(projectFilter ? { projectId: projectFilter } : {}),
+        ...(assigneeFilter ? { assigneeId: assigneeFilter } : {}),
+      },
+      select: {
+        id: true,
+        clientId: true,
+        projectId: true,
+        subTaskId: true,
+        periodName: true,
+        status: true,
+        taskSeqNo: true,
+        dueDate: true,
+        dueDateOverridden: true,
+        assigneeId: true,
       },
       orderBy: { taskSeqNo: "asc" },
     }),
@@ -50,6 +70,12 @@ export default async function TasksPage({
       },
       orderBy: { companyName: "asc" },
     }),
+    prisma.client.findMany({
+      where: { archivedAt: null },
+      select: { id: true, companyName: true, groupName: true, tags: { select: { tagId: true } } },
+    }),
+    prisma.project.findMany({ select: { id: true, name: true } }),
+    prisma.projectSubTask.findMany({ select: { id: true, name: true } }),
     prisma.employee.findMany({ orderBy: [{ firstName: "asc" }, { lastName: "asc" }] }),
     prisma.accountingPeriod.findMany(),
     clientGroupNames(user),
@@ -57,24 +83,38 @@ export default async function TasksPage({
     savedViewsFor(user, "/tasks"),
   ]);
 
+  const clientById = new Map(lookupClients.map((c) => [c.id, c]));
+  const projectName = new Map(projects.map((p) => [p.id, p.name]));
+  const stepName = new Map(steps.map((s) => [s.id, s.name]));
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
   // Only tasks in each active assignment's *current* period.
   const currentKey = new Set(
-    assignments.map((a) => `${a.clientId}:${a.projectId}:${a.currentPeriod}`)
+    assignments.map((a) => engagementKey(a.clientId, a.projectId, a.currentPeriod ?? ""))
   );
   const periodByName = new Map(periods.map((p) => [p.name, p]));
   // Each step carries its own resolved deadline (project rule → client
   // override → step milestone), so two steps in the same period can
   // legitimately be due on different days. Falls back to the period end for
   // any row generated before due dates existed.
-  const dueOf = (a: (typeof activities)[number]) =>
+  const dueOf = (a: { dueDate: Date | null; periodName: string }) =>
     a.dueDate ?? periodByName.get(a.periodName)?.endDate ?? null;
 
-  const rows: TaskRow[] = activities
-    .filter((a) => currentKey.has(`${a.clientId}:${a.projectId}:${a.periodName}`))
-    .filter((a) => !statusFilter || a.status === statusFilter)
-    .filter((a) => !clientFilter || a.clientId === clientFilter)
-    .filter((a) => !projectFilter || a.projectId === projectFilter)
-    .filter((a) => !assigneeFilter || a.assigneeId === assigneeFilter)
+  const allRows: TaskRow[] = activities
+    .filter((a) => currentKey.has(engagementKey(a.clientId, a.projectId, a.periodName)))
+    .flatMap((a) => {
+      const client = clientById.get(a.clientId);
+      if (!client) return [];
+      return [
+        {
+          ...a,
+          client,
+          projectName: projectName.get(a.projectId) ?? "",
+          stepName: stepName.get(a.subTaskId) ?? "",
+          assignee: a.assigneeId ? employeeById.get(a.assigneeId) : undefined,
+        },
+      ];
+    })
     .filter((a) =>
       matchesClientFilters(
         { groupName: a.client.groupName, tagIds: a.client.tags.map((t) => t.tagId) },
@@ -85,8 +125,8 @@ export default async function TasksPage({
       (a) =>
         !query ||
         a.client.companyName.toLowerCase().includes(query) ||
-        a.project.name.toLowerCase().includes(query) ||
-        a.subTask.name.toLowerCase().includes(query)
+        a.projectName.toLowerCase().includes(query) ||
+        a.stepName.toLowerCase().includes(query)
     )
     .filter((a) => !dueFilter || matchesDueFilter(dueBucket(dueOf(a), a.status), dueFilter))
     .map((a) => {
@@ -96,8 +136,8 @@ export default async function TasksPage({
         clientId: a.clientId,
         projectId: a.projectId,
         clientName: a.client.companyName,
-        projectName: a.project.name,
-        step: a.subTask.name,
+        projectName: a.projectName,
+        step: a.stepName,
         status: a.status,
         assigneeName: a.assignee ? `${a.assignee.firstName} ${a.assignee.lastName}` : "Unassigned",
         dueDate: dueDate ? dueDate.toISOString() : null,
@@ -110,6 +150,10 @@ export default async function TasksPage({
       if (!y.dueDate) return -1;
       return x.dueDate.localeCompare(y.dueDate);
     });
+
+  // Only one page of rows goes to the browser; the count covers them all.
+  const page = pageFromParams(params.page, allRows.length);
+  const rows = allRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const projectOptions = [...new Map(assignments.map((a) => [a.project.id, a.project.name]))]
     .map(([value, label]) => ({ value, label }))
@@ -142,13 +186,15 @@ export default async function TasksPage({
           tags={tags.map((t) => ({ value: t.id, label: t.name }))}
           trailing={
             <span className="whitespace-nowrap text-sm text-ink-muted">
-              {rows.length} {rows.length === 1 ? "task" : "tasks"}
+              {allRows.length} {allRows.length === 1 ? "task" : "tasks"}
             </span>
           }
         />
       </div>
 
       <TasksTable rows={rows} employees={employeeOptions} />
+
+      <Pager path="/tasks" params={params} page={page} total={allRows.length} noun={["task", "tasks"]} />
     </div>
   );
 }

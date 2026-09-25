@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { currentPeriodWork } from "@/lib/work-summary";
 import { ReportHeader } from "@/components/report-header";
 
 const RECURRING_LABELS: Record<string, string> = {
@@ -10,23 +11,19 @@ const RECURRING_LABELS: Record<string, string> = {
 };
 
 export default async function ProjectsStatusSummaryPage() {
-  const [projects, assignments, activities] = await Promise.all([
+  const [projects, assignments] = await Promise.all([
     prisma.project.findMany({ include: { recurring: true }, orderBy: { name: "asc" } }),
     prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
-    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
+  // Each engagement's current-period rows, read once and indexed (src/lib/work-summary.ts).
+  const workFor = await currentPeriodWork(assignments);
 
   const rows = projects.map((p) => {
     const projectAssignments = assignments.filter((a) => a.projectId === p.id);
     let done = 0;
     let taskCount = 0;
     for (const a of projectAssignments) {
-      const periodActivities = activities.filter(
-        (act) =>
-          act.clientId === a.clientId &&
-          act.projectId === a.projectId &&
-          act.periodName === a.currentPeriod
-      );
+      const periodActivities = workFor(a);
       taskCount += periodActivities.length;
       done += periodActivities.filter((act) => act.status === "DONE").length;
     }

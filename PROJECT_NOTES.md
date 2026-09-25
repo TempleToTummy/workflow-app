@@ -864,6 +864,18 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   Status and cadence codes were unknown when this was written — the dry run
   refuses anything not in the table of obvious spellings. CLIENT_TAX_EXTENSION
   is not imported (no model yet).
+- Pages that look across ALL work must not load every ClientActivity row.
+  With the KTAX history (~115k rows) doing that made the dashboard take 30s,
+  Admin Client Activity 76s (a 170 MB page) and four reports 10–13s. Now:
+  the dashboard reads one summary per client/project/period from a window-
+  function query (periodSummaries in src/lib/work-summary.ts — plain SQL that
+  runs on SQLite and Postgres; checked row-for-row against the old JS on both);
+  Tasks and the status reports read only current-period rows
+  (`periodName IN` the handful of current period names); the long lists page
+  100 rows at a time (src/components/pager.tsx, FilterBar drops ?page on any
+  filter change). Everything now loads in ~1–2.5s on that data. The Client
+  Activity Matrix is still an ~12 MB page (1,800 clients × every service) —
+  it's the grid itself, not the query.
 - The scheduler has no locking beyond the in-process `inFlight` guard in
   ensurePeriodsCurrent. Two instances running the job at the same moment is
   safe (every write is a diff against existing rows) but would both log a run.

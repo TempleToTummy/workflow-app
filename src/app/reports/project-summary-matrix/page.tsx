@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { currentPeriodWork } from "@/lib/work-summary";
 import { deriveAssignmentStatus } from "@/lib/workflow";
 import { STATUS_LABEL, STATUS_CLASSES } from "@/components/status-badge";
 import type { ActivityStatus } from "@prisma/client";
@@ -8,11 +9,12 @@ import { ReportHeader } from "@/components/report-header";
 const STATUSES: ActivityStatus[] = ["NOT_STARTED", "IN_PROGRESS", "AWAITING_REVIEW", "DONE"];
 
 export default async function ProjectSummaryMatrixPage() {
-  const [projects, assignments, activities] = await Promise.all([
+  const [projects, assignments] = await Promise.all([
     prisma.project.findMany({ orderBy: { name: "asc" } }),
     prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
-    prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
+  // Each engagement's current-period rows, read once and indexed (src/lib/work-summary.ts).
+  const workFor = await currentPeriodWork(assignments);
 
   const rows = projects.map((p) => {
     const projectAssignments = assignments.filter((a) => a.projectId === p.id);
@@ -23,12 +25,7 @@ export default async function ProjectSummaryMatrixPage() {
       DONE: 0,
     };
     for (const a of projectAssignments) {
-      const periodActivities = activities.filter(
-        (act) =>
-          act.clientId === a.clientId &&
-          act.projectId === a.projectId &&
-          act.periodName === a.currentPeriod
-      );
+      const periodActivities = workFor(a);
       counts[deriveAssignmentStatus(periodActivities)]++;
     }
     return { project: p, counts, total: projectAssignments.length };

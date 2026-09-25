@@ -2,16 +2,36 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { StatusBadge } from "@/components/status-badge";
 import { ReportHeader } from "@/components/report-header";
+import { Pager, pageFromParams } from "@/components/pager";
 
-export default async function ProjectActivityListPage() {
+// Rows per screen. Larger than the working lists because a report is read
+// top to bottom; the CSV export has every row.
+const REPORT_PAGE_SIZE = 250;
+
+export default async function ProjectActivityListPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | undefined }>;
+}) {
+  const params = await searchParams;
+  const where = { client: { archivedAt: null } };
+  const total = await prisma.clientActivity.count({ where });
+  const page = pageFromParams(params.page, total, REPORT_PAGE_SIZE);
   const activities = await prisma.clientActivity.findMany({
-    where: { client: { archivedAt: null } },
-    include: { client: true, project: true, subTask: true },
+    where,
+    include: {
+      client: { select: { companyName: true } },
+      project: { select: { name: true } },
+      subTask: { select: { name: true } },
+    },
     orderBy: [
       { client: { companyName: "asc" } },
       { periodName: "desc" },
       { taskSeqNo: "asc" },
+      { id: "asc" },
     ],
+    skip: (page - 1) * REPORT_PAGE_SIZE,
+    take: REPORT_PAGE_SIZE,
   });
 
   const groups = new Map<
@@ -33,7 +53,7 @@ export default async function ProjectActivityListPage() {
       </Link>
       <ReportHeader
         title="Project Activity List"
-        description="Every task row on file, grouped by client and period."
+        description="Every task row on file, grouped by client and period. The CSV export has every row in one file."
         reportKey="project-activity-list"
       />
 
@@ -86,6 +106,15 @@ export default async function ProjectActivityListPage() {
           </p>
         )}
       </div>
+
+      <Pager
+        path="/reports/project-activity-list"
+        params={params}
+        page={page}
+        total={total}
+        pageSize={REPORT_PAGE_SIZE}
+        noun={["task", "tasks"]}
+      />
     </div>
   );
 }

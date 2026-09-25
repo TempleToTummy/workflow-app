@@ -240,6 +240,9 @@ export function FilterBar({
   function buildUrl(mutate: (p: URLSearchParams) => void): string {
     const params = new URLSearchParams(searchParams.toString());
     mutate(params);
+    // Any filter change starts the list over: page 7 of the old results means
+    // nothing in the new ones (see src/components/pager.tsx).
+    params.delete("page");
     const query = params.toString();
     return query ? `${pathname}?${query}` : pathname;
   }
