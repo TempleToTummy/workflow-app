@@ -36,7 +36,7 @@ export default async function MentionsPage({
   }));
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl px-8 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Mentions</h1>
       <p className="mt-1 text-sm text-ink-muted">
         Where a colleague has pulled you into a task by name.

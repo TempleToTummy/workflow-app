@@ -64,7 +64,7 @@ export function AccountingPeriodForm() {
       <button
         type="submit"
         disabled={isPending}
-        className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+        className="whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
       >
         Add Period
       </button>

@@ -26,4 +26,4 @@ export function StatusBadge({ status }: { status: ActivityStatus }) {
   );
 }
 
-export { STATUS_LABEL };
+export { STATUS_LABEL, STATUS_CLASSES };

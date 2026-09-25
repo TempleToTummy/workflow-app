@@ -6,7 +6,7 @@ export default async function ProjectsTaskPage() {
   const subtasks = await prisma.projectSubTask.findMany({ orderBy: { name: "asc" } });
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>

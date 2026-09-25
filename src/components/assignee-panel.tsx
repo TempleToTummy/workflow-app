@@ -97,7 +97,7 @@ export function AssigneePanel({
 
   return (
     <div className="rounded-lg border border-line bg-surface p-4">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
         Assignees
       </h2>
 
@@ -186,7 +186,7 @@ export function AssigneePanel({
               type="button"
               onClick={handleAssign}
               disabled={!canAssign}
-              className="mt-3 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="mt-3 w-full whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               {isPending ? "Assigning…" : "Assign"}
             </button>

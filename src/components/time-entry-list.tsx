@@ -48,7 +48,7 @@ export function TimeEntryList({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+    <div className="overflow-x-auto rounded-lg border border-line bg-surface">
       <table className="w-full text-left text-sm">
         <thead>
           <tr className="border-b border-line bg-black/[0.02] text-xs tracking-wide text-ink-muted uppercase">

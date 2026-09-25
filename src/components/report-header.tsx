@@ -27,9 +27,9 @@ export function ReportHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && <p className="mt-1 text-sm text-ink-muted">{description}</p>}
         <p className="print-only mt-1 text-xs text-ink-muted">
           Printed{" "}

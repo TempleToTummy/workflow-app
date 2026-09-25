@@ -175,7 +175,7 @@ export function ClientRequestForm({
             type="button"
             onClick={handleUpload}
             disabled={isPending}
-            className="rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+            className="whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {isPending ? "Sending…" : "Send this file"}
           </button>

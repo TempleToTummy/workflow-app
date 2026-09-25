@@ -21,7 +21,9 @@ export function DueSummaryCards({
   otherParams: URLSearchParams;
 }) {
   return (
-    <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+    // xl, not lg: the breakpoint is the viewport, and the 16rem sidebar comes
+    // out of it, so at lg the four cards were too narrow for their labels.
+    <div className="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
       {CARDS.map((card) => {
         const isActive = active === card.id;
         const params = new URLSearchParams(otherParams);
@@ -41,7 +43,7 @@ export function DueSummaryCards({
                 : "border-line hover:border-ink-muted/40"
             }`}
           >
-            <span className="flex items-baseline gap-2">
+            <span className="flex min-w-0 items-baseline gap-2">
               <span
                 className={`tabular text-lg font-semibold ${
                   isOverdue && count > 0 ? "text-overdue" : count > 0 ? "text-accent" : "text-ink-muted"
@@ -49,7 +51,7 @@ export function DueSummaryCards({
               >
                 {count}
               </span>
-              <span className="text-sm font-medium text-ink">{card.label}</span>
+              <span className="truncate text-sm font-medium text-ink">{card.label}</span>
             </span>
             <span
               aria-hidden

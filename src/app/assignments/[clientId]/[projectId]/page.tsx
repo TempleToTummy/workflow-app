@@ -214,7 +214,7 @@ export default async function AssignmentDetailPage({
   }));
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="text-sm text-ink-muted hover:text-accent">
         ← Back to dashboard
       </Link>
@@ -304,7 +304,7 @@ export default async function AssignmentDetailPage({
         }}
       />
 
-      <div className="mt-6 flex flex-col gap-6 lg:flex-row">
+      <div className="mt-6 flex flex-col gap-6 xl:flex-row">
         <div className="min-w-0 flex-1">
           {tab === "list" && (
             <AssignmentChecklist
@@ -406,7 +406,7 @@ export default async function AssignmentDetailPage({
           )}
         </div>
 
-        <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-72">
+        <aside className="grid w-full shrink-0 items-start gap-4 md:grid-cols-2 xl:flex xl:w-72 xl:flex-col">
           <AssignmentDuePanel
             clientId={clientId}
             projectId={projectId}

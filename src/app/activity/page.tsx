@@ -84,7 +84,7 @@ export default async function ActivityLogPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-8 py-8">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Activity log</h1>
         <p className="mt-1 text-sm text-ink-muted">

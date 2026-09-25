@@ -120,7 +120,7 @@ export function EmployeeBillingCell({
           type="button"
           onClick={save}
           disabled={isPending}
-          className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+          className="whitespace-nowrap rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
         >
           Save
         </button>

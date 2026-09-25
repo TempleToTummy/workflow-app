@@ -202,7 +202,7 @@ function CommentBody({
                   }
                 });
               }}
-              className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+              className="whitespace-nowrap rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
             >
               Save
             </button>
@@ -325,7 +325,7 @@ function Composer({
           type="button"
           onClick={submit}
           disabled={isPending || !body.trim()}
-          className="rounded-full bg-accent px-3 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="whitespace-nowrap rounded-full bg-accent px-3 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {isPending ? "Posting…" : compact ? "Reply" : "Comment"}
         </button>

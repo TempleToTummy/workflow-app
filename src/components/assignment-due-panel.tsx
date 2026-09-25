@@ -118,7 +118,7 @@ export function AssignmentDuePanel({
               type="button"
               onClick={commit}
               disabled={isPending}
-              className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="whitespace-nowrap rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               {isPending ? "Saving…" : "Save"}
             </button>

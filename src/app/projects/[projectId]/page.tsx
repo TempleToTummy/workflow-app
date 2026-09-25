@@ -100,12 +100,12 @@ export default async function ProjectDetailPage({
     });
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-8 py-8">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/projects" className="text-sm text-ink-muted hover:text-accent">
         ← All projects
       </Link>
 
-      <div className="mt-4 mb-6">
+      <div className="mt-2 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
         {project.description && (
           <p className="mt-1 text-sm text-ink">{project.description}</p>
@@ -185,7 +185,7 @@ export default async function ProjectDetailPage({
       )}
 
       <h2 className="mb-3 text-sm font-semibold text-ink">Clients on this project</h2>
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">

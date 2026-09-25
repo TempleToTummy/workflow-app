@@ -136,7 +136,7 @@ export function TasksTable({
       </BulkBar>
       <BulkOutcome {...outcome} />
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
@@ -172,8 +172,8 @@ export function TasksTable({
                     aria-label={`Select ${r.clientName} · ${r.projectName} · ${r.step}`}
                   />
                 </td>
-                <td className="px-4 py-3 align-middle text-ink-muted">{r.clientName}</td>
-                <td className="px-4 py-3 align-middle text-ink-muted">{r.projectName}</td>
+                <td className="whitespace-nowrap px-4 py-3 align-middle text-ink-muted">{r.clientName}</td>
+                <td className="whitespace-nowrap px-4 py-3 align-middle text-ink-muted">{r.projectName}</td>
                 <td className="px-4 py-3 align-middle">
                   <Link
                     href={`/assignments/${r.clientId}/${r.projectId}`}
@@ -186,7 +186,7 @@ export function TasksTable({
                   <StatusBadge status={r.status} />
                 </td>
                 <td className="px-4 py-3 align-middle">
-                  <div className="flex items-center gap-2 text-ink-muted">
+                  <div className="flex items-center gap-2 whitespace-nowrap text-ink-muted">
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-medium text-accent">
                       {initials(r.assigneeName)}
                     </span>
@@ -194,7 +194,7 @@ export function TasksTable({
                   </div>
                 </td>
                 <td
-                  className={`tabular px-4 py-3 align-middle ${
+                  className={`tabular whitespace-nowrap px-4 py-3 align-middle ${
                     r.urgency === "overdue"
                       ? "font-medium text-overdue"
                       : r.urgency === "soon"

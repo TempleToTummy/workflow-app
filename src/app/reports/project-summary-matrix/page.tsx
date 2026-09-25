@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { deriveAssignmentStatus } from "@/lib/workflow";
-import { STATUS_LABEL } from "@/components/status-badge";
+import { STATUS_LABEL, STATUS_CLASSES } from "@/components/status-badge";
 import type { ActivityStatus } from "@prisma/client";
 import { ReportHeader } from "@/components/report-header";
 
@@ -35,7 +35,7 @@ export default async function ProjectSummaryMatrixPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -45,29 +45,45 @@ export default async function ProjectSummaryMatrixPage() {
         reportKey="project-summary-matrix"
       />
 
-      <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
               <th className="px-4 py-3 font-medium">Project</th>
               {STATUSES.map((s) => (
-                <th key={s} className="tabular px-4 py-3 text-right font-medium">
+                <th key={s} className="w-32 px-4 py-3 text-center font-medium">
                   {STATUS_LABEL[s]}
                 </th>
               ))}
-              <th className="tabular px-4 py-3 text-right font-medium">Total</th>
+              <th className="w-24 px-4 py-3 text-center font-medium">Total</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(({ project, counts, total }) => (
-              <tr key={project.id} className="border-b border-line last:border-0">
-                <td className="px-4 py-2 font-medium text-ink">{project.name}</td>
+              <tr key={project.id} className="border-b border-line last:border-0 hover:bg-black/[0.015]">
+                <td className={`px-4 py-2.5 font-medium ${total > 0 ? "text-ink" : "text-ink-muted"}`}>
+                  {project.name}
+                </td>
                 {STATUSES.map((s) => (
-                  <td key={s} className="tabular px-4 py-2 text-right text-ink-muted">
-                    {counts[s]}
+                  <td key={s} className="px-4 py-2.5 text-center">
+                    {/* A zero is the common case, so it recedes; a real count
+                        gets its status colour, centred in the column. */}
+                    {counts[s] > 0 ? (
+                      <span className={`count-pill status-badge h-6 min-w-6 px-2 text-xs ${STATUS_CLASSES[s]}`}>
+                        {counts[s]}
+                      </span>
+                    ) : (
+                      <span className="tabular text-ink-muted/40">0</span>
+                    )}
                   </td>
                 ))}
-                <td className="tabular px-4 py-2 text-right font-medium text-ink">{total}</td>
+                <td
+                  className={`tabular px-4 py-2.5 text-center font-semibold ${
+                    total > 0 ? "text-ink" : "text-ink-muted/40"
+                  }`}
+                >
+                  {total}
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (

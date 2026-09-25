@@ -3,7 +3,7 @@ import { ProjectForm } from "@/components/project-form";
 
 export default function NewProjectPage() {
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl px-8 py-8">
       <Link href="/admin/projects" className="text-sm text-ink-muted hover:text-accent">
         ← Back to projects
       </Link>

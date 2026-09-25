@@ -86,7 +86,7 @@ export function ResetPasswordForm({
       <button
         type="submit"
         disabled={!canSubmit}
-        className="mt-1 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+        className="mt-1 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
       >
         {isPending ? "Saving…" : "Set new password"}
       </button>

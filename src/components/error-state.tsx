@@ -74,7 +74,7 @@ export function ErrorState({
               <button
                 type="button"
                 onClick={() => retry()}
-                className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                className="whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
               >
                 Try again
               </button>

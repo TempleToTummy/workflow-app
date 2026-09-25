@@ -220,8 +220,11 @@ function StepRow({
 
   return (
     <li className="rounded-lg border border-line bg-surface">
-      <div className="flex items-center justify-between gap-4 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* Wraps: when the column is too narrow for the name and the controls
+          side by side, the controls drop to a second line inside the card
+          instead of spilling out past its edge. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+        <div className="flex min-w-[12rem] flex-1 items-center gap-3">
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -240,7 +243,11 @@ function StepRow({
             {index + 1}
           </span>
           <div className="min-w-0">
-            <p className="truncate font-medium text-ink">{step.name}</p>
+            {/* Wraps to a second line rather than cutting a step name to
+                "Report Sent to Cli…" when the controls on the right are wide. */}
+            <p className="line-clamp-2 font-medium leading-snug text-ink" title={step.name}>
+              {step.name}
+            </p>
             {step.completedBy && step.completedAt && (
               <p className="text-[11px] text-ink-muted">
                 Signed off by {step.completedBy} · {step.completedAt}
@@ -267,7 +274,7 @@ function StepRow({
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <TaskTimer
             activityId={step.id}
             runningSince={step.timerSince}

@@ -31,7 +31,7 @@ export default async function TimeSummaryPage({
   const realization = realizationPercent(data.total);
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -41,7 +41,7 @@ export default async function TimeSummaryPage({
         reportKey="time-summary"
         query={{ range: rangeKey }}
       >
-        <div className="no-print mt-3 flex flex-wrap items-center gap-1.5">
+        <div className="no-print mt-4 flex flex-wrap items-center gap-1.5">
           {TIME_RANGES.map((key) => (
             <Link
               key={key}
@@ -112,7 +112,7 @@ function RollupTable({
   return (
     <div className="print-block mt-6">
       <h2 className="text-sm font-semibold tracking-wide text-ink-muted uppercase">{heading}</h2>
-      <div className="mt-2 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="mt-2 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs tracking-wide text-ink-muted uppercase">

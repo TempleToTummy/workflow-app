@@ -123,14 +123,24 @@ export default async function ClientDetailPage({
     }));
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
-      <div className="flex items-center justify-between">
-        <Link
-          href={client.archivedAt ? "/clients?archived=1" : "/clients"}
-          className="text-sm text-ink-muted hover:text-accent"
-        >
-          ← Back to clients
-        </Link>
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
+      <Link
+        href={client.archivedAt ? "/clients?archived=1" : "/clients"}
+        className="text-sm text-ink-muted hover:text-accent"
+      >
+        ← Back to clients
+      </Link>
+      {/* The client's name as the page title, like every other detail page,
+          rather than leaving the page headed by a generic "Client" card. */}
+      <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">{client.companyName}</h1>
+          <p className="mt-1 text-sm text-ink-muted">
+            {[client.groupName, client.corpType?.name, client.businessType?.name]
+              .filter(Boolean)
+              .join(" · ") || "Client details, contacts, projects and files."}
+          </p>
+        </div>
         {isAdmin && !client.archivedAt && (
           <ArchiveClientButton clientId={client.id} clientName={client.companyName} />
         )}
@@ -159,13 +169,13 @@ export default async function ClientDetailPage({
             Edit
           </Link>
         </div>
-        <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+        <dl className="grid grid-cols-1 gap-x-8 gap-y-4 text-sm sm:grid-cols-2">
           <div>
-            <dt className="text-xs text-ink-muted">Client Name</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Client Name</dt>
             <dd className="text-ink">{client.companyName}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Group Name</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Group Name</dt>
             <dd className="text-ink">
               {client.groupName ? (
                 <Link
@@ -192,31 +202,31 @@ export default async function ClientDetailPage({
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Corporation Type</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Corporation Type</dt>
             <dd className="text-ink">{client.corpType?.name ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Business Type</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Business Type</dt>
             <dd className="text-ink">{client.businessType?.name ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Phone No</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Phone No</dt>
             <dd className="text-ink">{client.phone ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Fax</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Fax</dt>
             <dd className="text-ink">{client.fax ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Email Address</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Email Address</dt>
             <dd className="text-ink">{client.email ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Tax ID (FIN)</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Tax ID (FIN)</dt>
             <dd className="text-ink">{client.taxId ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Address</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Address</dt>
             <dd className="text-ink">
               {[client.address1, client.address2, client.city, client.state, client.zipcode]
                 .filter(Boolean)
@@ -224,22 +234,22 @@ export default async function ClientDetailPage({
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Registration Date</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Registration Date</dt>
             <dd className="text-ink">
               {client.coRegDate ? client.coRegDate.toISOString().slice(0, 10) : "—"}
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Registration State</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Registration State</dt>
             <dd className="text-ink">{client.coRegState ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-ink-muted">Renewal Month</dt>
+            <dt className="mb-0.5 text-xs text-ink-muted">Renewal Month</dt>
             <dd className="text-ink">{client.renewMonth ?? "—"}</dd>
           </div>
           {client.note && (
             <div className="sm:col-span-2">
-              <dt className="text-xs text-ink-muted">Note</dt>
+              <dt className="mb-0.5 text-xs text-ink-muted">Note</dt>
               <dd className="text-ink">{client.note}</dd>
             </div>
           )}
@@ -284,7 +294,15 @@ export default async function ClientDetailPage({
                     {a.project.name}
                   </Link>
                 </td>
-                <td className="py-2 text-ink-muted">{a.active ? "Y" : "N"}</td>
+                <td className="py-2">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                      a.active ? "bg-[var(--status-done-soft)] text-[var(--status-done)]" : "bg-black/5 text-ink-muted"
+                    }`}
+                  >
+                    {a.active ? "Active" : "Inactive"}
+                  </span>
+                </td>
                 <td className="tabular py-2 text-ink-muted">{a.currentPeriod ?? "—"}</td>
                 <td className="py-2 text-right">
                   <Link
@@ -316,7 +334,7 @@ export default async function ClientDetailPage({
           <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
             Files
             {documents.length > 0 && (
-              <span className="tabular ml-2 rounded-full bg-black/5 px-1.5 py-0.5 text-[11px] normal-case tracking-normal">
+              <span className="count-pill ml-2 bg-black/5 align-middle normal-case tracking-normal">
                 {documents.length}
               </span>
             )}

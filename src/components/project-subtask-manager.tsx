@@ -130,14 +130,14 @@ export function ProjectSubTaskManager({ subtasks }: { subtasks: SubTask[] }) {
         <button
           type="submit"
           disabled={isPending || !name.trim()}
-          className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           Add Task
         </button>
         {error && <p className="w-full text-xs text-overdue">{error}</p>}
       </form>
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">

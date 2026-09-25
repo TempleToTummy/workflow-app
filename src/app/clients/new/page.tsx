@@ -26,7 +26,7 @@ export default async function NewClientPage() {
   }));
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
+    <div className="mx-auto w-full max-w-5xl px-8 py-8">
       <Link href="/clients" className="text-sm text-ink-muted hover:text-accent">
         ← Back to clients
       </Link>

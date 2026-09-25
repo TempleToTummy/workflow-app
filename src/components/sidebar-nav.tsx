@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type { Role } from "@prisma/client";
 import { REPORTS, ADMIN_GROUPS } from "@/lib/nav-data";
 import { logout } from "@/lib/auth-actions";
@@ -27,6 +27,7 @@ function NavLink({
   return (
     <Link
       href={href}
+      aria-current={active ? "page" : undefined}
       className={`flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
         active
           ? "bg-sidebar-active-bg font-medium text-sidebar-active-ink"
@@ -35,7 +36,7 @@ function NavLink({
     >
       <span>{label}</span>
       {badge > 0 && (
-        <span className="tabular rounded-full bg-sidebar-active-ink px-1.5 text-[10px] font-medium text-sidebar-bg">
+        <span className="count-pill bg-sidebar-active-ink text-[10px] text-sidebar-bg">
           {badge > 99 ? "99+" : badge}
         </span>
       )}
@@ -107,6 +108,17 @@ export function SidebarNav({
   runningTimer?: { startedAt: string; label: string; href: string | null } | null;
 }) {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+
+  // With Reports or Admin Menu open, the current page's link can sit below
+  // the fold of the nav's own scroll area. Bring it into view on navigation
+  // so the highlighted item is never hidden.
+  useEffect(() => {
+    navRef.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
+
   const reportsActive = pathname.startsWith("/reports");
   const adminActive = pathname.startsWith("/admin");
   const isAdmin = user.role === "ADMIN";
@@ -114,7 +126,9 @@ export function SidebarNav({
   return (
     // no-print: a navy column down the left of every printed page wastes a
     // quarter of the sheet and a lot of ink.
-    <aside className="no-print flex h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar-bg">
+    // sticky + h-screen: the sidebar stays pinned to the viewport while the page
+    // scrolls, instead of ending after the first screenful on long pages.
+    <aside className="no-print sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar-bg">
       <div className="flex items-center gap-2.5 px-5 py-5">
         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-sidebar-active-ink text-sm font-semibold text-sidebar-bg">
           W
@@ -126,7 +140,7 @@ export function SidebarNav({
         <SearchBox compact />
       </div>
 
-      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-4">
+      <nav ref={navRef} className="sidebar-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-4">
         <NavLink href="/" label="Dashboard" exact />
         <NavLink href="/clients" label="Clients" />
         <NavLink href="/projects" label="Projects" />
@@ -148,6 +162,7 @@ export function SidebarNav({
                 <Link
                   key={r.href}
                   href={r.href}
+                  aria-current={pathname === r.href ? "page" : undefined}
                   className={`rounded-md px-2.5 py-1.5 text-sm transition-colors ${
                     pathname === r.href
                       ? "font-medium text-sidebar-active-ink"
@@ -172,6 +187,7 @@ export function SidebarNav({
                     <Link
                       key={item.href}
                       href={item.href}
+                      aria-current={pathname === item.href ? "page" : undefined}
                       className={`block rounded-md px-2.5 py-1.5 text-sm transition-colors ${
                         pathname === item.href
                           ? "font-medium text-sidebar-active-ink"

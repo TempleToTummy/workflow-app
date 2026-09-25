@@ -235,7 +235,7 @@ export default async function DashboardPage({
 
   return (
     <div className="mx-auto w-full max-w-6xl px-8 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="mt-1 text-sm text-ink-muted">
@@ -250,7 +250,7 @@ export default async function DashboardPage({
           {user.role === "ADMIN" && (
             <Link
               href="/clients/new"
-              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
+              className="whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
             >
               + New Client
             </Link>
@@ -272,7 +272,7 @@ export default async function DashboardPage({
             >
               {v.label}
               <span
-                className={`tabular rounded-full px-1.5 text-[11px] ${
+                className={`count-pill ${
                   active ? "bg-accent/15 text-accent" : "bg-black/5 text-ink-muted"
                 }`}
               >

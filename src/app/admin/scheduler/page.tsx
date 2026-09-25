@@ -77,7 +77,7 @@ export default async function SchedulerPage() {
     }));
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -117,7 +117,7 @@ export default async function SchedulerPage() {
           <h2 className="mt-8 mb-3 text-sm font-semibold text-ink">
             Engagements behind the current period
           </h2>
-          <div className="overflow-hidden rounded-lg border border-line bg-surface">
+          <div className="overflow-x-auto rounded-lg border border-line bg-surface">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
@@ -152,7 +152,7 @@ export default async function SchedulerPage() {
       )}
 
       <h2 className="mt-8 mb-3 text-sm font-semibold text-ink">Run history</h2>
-      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">

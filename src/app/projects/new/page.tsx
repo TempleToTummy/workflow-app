@@ -11,7 +11,7 @@ export default async function NewProjectPage() {
       <Link href="/projects" className="text-sm text-ink-muted hover:text-accent">
         ← All projects
       </Link>
-      <div className="mt-4">
+      <div className="mt-2">
         <h1 className="text-2xl font-semibold tracking-tight">New project</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Start from scratch with your own project and checklist.

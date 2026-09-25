@@ -5,7 +5,7 @@ import { CardsSkeleton, PageHeaderSkeleton, TableSkeleton } from "@/components/s
 // due cards and the table are sketched in the same arrangement they'll appear.
 export default function Loading() {
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <PageHeaderSkeleton />
       <div className="mt-6">
         <CardsSkeleton />

@@ -74,7 +74,7 @@ export function EmailTemplateManager({
             setCreating(true);
             setEditing(null);
           }}
-          className="self-start rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+          className="self-start whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
         >
           + New template
         </button>
@@ -311,7 +311,7 @@ function TemplateForm({
           type="button"
           onClick={handleSave}
           disabled={isPending || !name.trim() || !subject.trim() || !body.trim()}
-          className="rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+          className="whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
         >
           {isPending ? "Saving…" : "Save template"}
         </button>

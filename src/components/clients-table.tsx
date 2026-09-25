@@ -178,7 +178,7 @@ export function ClientsTable({
       {message && <p className="mb-2 text-sm text-accent">{message}</p>}
       {error && <p className="mb-2 text-sm text-overdue">{error}</p>}
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">

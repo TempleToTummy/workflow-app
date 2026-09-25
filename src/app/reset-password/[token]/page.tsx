@@ -44,7 +44,7 @@ export default async function ResetPasswordPage({
               </p>
               <Link
                 href="/forgot-password"
-                className="mt-4 inline-block rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                className="mt-4 inline-block whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
               >
                 Request a new link
               </Link>

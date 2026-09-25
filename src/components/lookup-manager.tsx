@@ -71,12 +71,12 @@ export function LookupManager({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="New name"
-          className="flex-1 rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
+          className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
         />
         <button
           type="submit"
           disabled={isPending || !name.trim()}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="whitespace-nowrap rounded-full bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           Add
         </button>

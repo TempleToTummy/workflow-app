@@ -139,7 +139,7 @@ export default async function EmailPage({
           </Link>
           <Link
             href="/email/new"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
+            className="whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
           >
             + Compose
           </Link>
@@ -180,7 +180,7 @@ export default async function EmailPage({
             >
               {v.label}
               <span
-                className={`tabular rounded-full px-1.5 text-[11px] ${
+                className={`count-pill ${
                   active ? "bg-accent/15 text-accent" : "bg-black/5 text-ink-muted"
                 }`}
               >
@@ -206,7 +206,7 @@ export default async function EmailPage({
         />
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">

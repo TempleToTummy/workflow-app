@@ -17,7 +17,7 @@ export default async function AccountingPeriodsPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -33,7 +33,7 @@ export default async function AccountingPeriodsPage() {
         <AccountingPeriodForm />
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">

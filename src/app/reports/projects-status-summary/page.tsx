@@ -39,7 +39,7 @@ export default async function ProjectsStatusSummaryPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -49,41 +49,47 @@ export default async function ProjectsStatusSummaryPage() {
         reportKey="projects-status-summary"
       />
 
-      <div className="mt-6 flex flex-col gap-3">
+      {/* One card with a row per service, every row the same height whether
+          or not it has work, so the progress bars line up down the page. */}
+      <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
         {rows.map(({ project, clientCount, done, taskCount }) => {
           const pct = taskCount === 0 ? 0 : Math.round((done / taskCount) * 100);
           return (
             <div
               key={project.id}
-              className="rounded-lg border border-line bg-surface p-4"
+              className="print-block grid grid-cols-[minmax(0,1fr)_minmax(8rem,16rem)_8rem] items-center gap-6 border-b border-line px-4 py-3 last:border-0"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-ink">{project.name}</p>
-                  <p className="text-xs text-ink-muted">
-                    {RECURRING_LABELS[project.recurring.type] ?? project.recurring.type} ·{" "}
-                    {clientCount} client{clientCount === 1 ? "" : "s"} assigned
-                  </p>
-                </div>
-                <p className="tabular text-sm text-ink-muted">
-                  {taskCount === 0 ? "No active tasks" : `${done}/${taskCount} tasks done`}
+              <div className="min-w-0">
+                <p className={`truncate font-medium ${taskCount > 0 ? "text-ink" : "text-ink-muted"}`}>
+                  {project.name}
+                </p>
+                <p className="text-xs text-ink-muted">
+                  {RECURRING_LABELS[project.recurring.type] ?? project.recurring.type} ·{" "}
+                  {clientCount} client{clientCount === 1 ? "" : "s"} assigned
                 </p>
               </div>
-              {taskCount > 0 && (
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/5">
-                  <div
-                    className="h-full rounded-full bg-accent"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              )}
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/5">
+                {taskCount > 0 && (
+                  <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
+                )}
+              </div>
+              <p className="tabular text-right text-sm text-ink-muted">
+                {taskCount === 0 ? (
+                  <span className="text-ink-muted/60">No active tasks</span>
+                ) : (
+                  <>
+                    <span className="font-medium text-ink">
+                      {done}/{taskCount}
+                    </span>{" "}
+                    done · {pct}%
+                  </>
+                )}
+              </p>
             </div>
           );
         })}
         {rows.length === 0 && (
-          <p className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-ink-muted">
-            No projects yet.
-          </p>
+          <p className="px-4 py-10 text-center text-ink-muted">No projects yet.</p>
         )}
       </div>
     </div>

@@ -12,7 +12,7 @@ export default async function ProjectTaskComparePage() {
   const rows = Array.from({ length: maxSteps }, (_, i) => i);
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -22,13 +22,21 @@ export default async function ProjectTaskComparePage() {
         reportKey="project-task-compare"
       />
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
-              <th className="sticky left-0 bg-black/[0.02] px-4 py-3 font-medium">Step #</th>
+      {/* Scrolls inside the card on both axes, capped at the viewport height,
+          so the horizontal scrollbar stays on screen and the project names
+          stay visible while reading down a long checklist. */}
+      <div className="mt-6 max-h-[calc(100vh-12rem)] overflow-auto rounded-lg border border-line bg-surface">
+        <table className="w-full border-separate border-spacing-0 text-left text-sm">
+          <thead className="sticky top-0 z-[2]">
+            <tr className="bg-[#faf7f0] text-[11px] uppercase tracking-wide text-ink-muted">
+              <th className="matrix-sticky w-14 border-b border-line px-3 py-3 text-center align-bottom font-medium">
+                Step
+              </th>
               {projects.map((p) => (
-                <th key={p.id} className="min-w-[180px] px-4 py-3 font-medium">
+                <th
+                  key={p.id}
+                  className="w-52 min-w-52 border-b border-line px-4 py-3 align-bottom font-medium leading-snug"
+                >
                   {p.name}
                 </th>
               ))}
@@ -36,17 +44,28 @@ export default async function ProjectTaskComparePage() {
           </thead>
           <tbody>
             {rows.map((i) => (
-              <tr key={i} className="border-b border-line last:border-0">
-                <td className="sticky left-0 bg-surface px-4 py-2 text-xs text-ink-muted">
+              <tr key={i} className="group">
+                <td className="matrix-sticky tabular border-b border-line px-3 py-2.5 text-center align-top text-xs text-ink-muted group-last:border-b-0">
                   {i + 1}
                 </td>
-                {projects.map((p) => (
-                  <td key={p.id} className="px-4 py-2 text-ink-muted">
-                    {p.subtasks[i]
-                      ? `${p.subtasks[i].sequence}. ${p.subtasks[i].subTask.name}`
-                      : ""}
-                  </td>
-                ))}
+                {projects.map((p) => {
+                  const step = p.subtasks[i];
+                  return (
+                    <td
+                      key={p.id}
+                      className="border-b border-line px-4 py-2.5 align-top group-last:border-b-0 group-hover:bg-black/[0.015]"
+                    >
+                      {step && (
+                        <span className="flex gap-2">
+                          <span className="tabular w-7 shrink-0 text-right text-xs leading-5 text-ink-muted">
+                            {step.sequence}
+                          </span>
+                          <span className="text-ink">{step.subTask.name}</span>
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
             {maxSteps === 0 && (

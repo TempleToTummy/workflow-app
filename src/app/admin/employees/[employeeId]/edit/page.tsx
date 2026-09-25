@@ -18,7 +18,7 @@ export default async function EditEmployeePage({
   if (!employee) notFound();
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl px-8 py-8">
       <Link href="/admin/employees" className="text-sm text-ink-muted hover:text-accent">
         ← Back to employees
       </Link>

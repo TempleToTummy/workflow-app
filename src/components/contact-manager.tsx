@@ -101,7 +101,7 @@ function ContactRow({ contact }: { contact: Contact }) {
             type="button"
             onClick={save}
             disabled={isPending}
-            className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+            className="whitespace-nowrap rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {isPending ? "Saving…" : "Save"}
           </button>
@@ -179,7 +179,7 @@ export function ContactManager({ clientId, contacts }: { clientId: string; conta
         <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
           Contacts
           {contacts.length > 0 && (
-            <span className="tabular ml-2 rounded-full bg-black/5 px-1.5 py-0.5 text-[11px] normal-case tracking-normal">
+            <span className="count-pill ml-2 bg-black/5 align-middle normal-case tracking-normal">
               {contacts.length}
             </span>
           )}
@@ -214,7 +214,7 @@ export function ContactManager({ clientId, contacts }: { clientId: string; conta
               type="button"
               onClick={add}
               disabled={isPending}
-              className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="whitespace-nowrap rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               {isPending ? "Adding…" : "Add contact"}
             </button>

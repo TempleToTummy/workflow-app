@@ -116,7 +116,7 @@ export function LoginForm({
         <button
           type="submit"
           disabled={isPending || notice !== null}
-          className="mt-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="mt-1 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {isPending ? "Checking…" : "Verify"}
         </button>
@@ -167,7 +167,7 @@ export function LoginForm({
       <button
         type="submit"
         disabled={isPending}
-        className="mt-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+        className="mt-1 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
       >
         {isPending ? "Signing in…" : "Sign in"}
       </button>

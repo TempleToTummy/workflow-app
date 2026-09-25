@@ -54,7 +54,7 @@ export default async function ProjectsPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-8 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
           <p className="mt-1 text-sm text-ink-muted">
@@ -65,22 +65,22 @@ export default async function ProjectsPage() {
         {user.role === "ADMIN" && (
           <Link
             href="/projects/new"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
+            className="whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90"
           >
             + New Project
           </Link>
         )}
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
               <th className="px-4 py-3 font-medium">Project</th>
               <th className="px-4 py-3 font-medium">Cadence</th>
               <th className="px-4 py-3 font-medium">Due</th>
-              <th className="px-4 py-3 font-medium">Steps</th>
-              <th className="px-4 py-3 font-medium">Clients</th>
+              <th className="px-4 py-3 text-center font-medium">Steps</th>
+              <th className="px-4 py-3 text-center font-medium">Clients</th>
               <th className="px-4 py-3 font-medium">Progress this period</th>
             </tr>
           </thead>
@@ -101,20 +101,20 @@ export default async function ProjectsPage() {
                     <p className="text-xs text-ink-muted">{r.description}</p>
                   )}
                 </td>
-                <td className="px-4 py-4 align-middle text-ink-muted">{r.cadence}</td>
+                <td className="whitespace-nowrap px-4 py-4 align-middle text-ink-muted">{r.cadence}</td>
                 <td className="px-4 py-4 align-middle text-xs text-ink-muted">
                   {r.dueRule}
                 </td>
-                <td className="px-4 py-4 align-middle text-ink-muted">
+                <td className="whitespace-nowrap px-4 py-4 text-center align-middle text-ink-muted">
                   {r.steps === 0 ? (
-                    <Link href={`/projects/${r.id}`} className="text-overdue hover:underline">
+                    <Link href={`/projects/${r.id}`} className="text-xs font-medium text-overdue hover:underline">
                       Add tasks
                     </Link>
                   ) : (
                     <span className="tabular">{r.steps}</span>
                   )}
                 </td>
-                <td className="tabular px-4 py-4 align-middle text-ink-muted">
+                <td className="tabular px-4 py-4 text-center align-middle text-ink-muted">
                   {r.clients}
                 </td>
                 <td className="px-4 py-4 align-middle">
@@ -122,13 +122,13 @@ export default async function ProjectsPage() {
                     <span className="text-xs text-ink-muted">No active clients</span>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-line">
+                      <div className="h-1.5 w-28 shrink-0 overflow-hidden rounded-full bg-line">
                         <div
                           className="h-full rounded-full bg-accent"
                           style={{ width: `${r.progressPct}%` }}
                         />
                       </div>
-                      <span className="tabular text-[11px] text-ink-muted">
+                      <span className="tabular whitespace-nowrap text-[11px] text-ink-muted">
                         {r.progress}
                       </span>
                     </div>

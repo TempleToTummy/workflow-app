@@ -34,7 +34,7 @@ export default async function AdminClientActivityPage({
   }));
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -43,7 +43,7 @@ export default async function AdminClientActivityPage({
         Every task row across every client, project, and period, editable directly.
       </p>
 
-      <div className="my-4">
+      <div className="mt-6 mb-4 rounded-lg border border-line bg-surface px-4 py-3">
         <FilterBar
           clients={clients.map((c) => ({ value: c.id, label: c.companyName }))}
           employees={employeeOptions.map((e) => ({ value: e.id, label: e.name }))}
@@ -65,8 +65,8 @@ export default async function AdminClientActivityPage({
           </thead>
           <tbody>
             {rows.map((a) => (
-              <tr key={a.id} className="border-b border-line last:border-0">
-                <td className="px-4 py-2">
+              <tr key={a.id} className="border-b border-line last:border-0 hover:bg-black/[0.015]">
+                <td className="whitespace-nowrap px-4 py-2">
                   <Link
                     href={`/clients/${a.clientId}`}
                     className="font-medium text-ink hover:text-accent"
@@ -74,11 +74,15 @@ export default async function AdminClientActivityPage({
                     {a.client.companyName}
                   </Link>
                 </td>
-                <td className="px-4 py-2 text-ink-muted">{a.project.name}</td>
-                <td className="px-4 py-2 text-ink-muted">{a.periodName}</td>
+                <td className="whitespace-nowrap px-4 py-2 text-ink-muted">{a.project.name}</td>
+                <td className="tabular whitespace-nowrap px-4 py-2 text-ink-muted">{a.periodName}</td>
                 <td className="px-4 py-2 text-ink-muted">
-                  <span className="tabular mr-1 text-xs">{a.taskSeqNo}</span>
-                  {a.subTask.name}
+                  <span className="flex items-baseline gap-2">
+                    <span className="tabular w-5 shrink-0 text-right text-xs text-ink-muted/70">
+                      {a.taskSeqNo}
+                    </span>
+                    <span className="text-ink">{a.subTask.name}</span>
+                  </span>
                 </td>
                 <AdminActivityRow
                   activityId={a.id}

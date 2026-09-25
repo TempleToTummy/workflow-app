@@ -72,7 +72,7 @@ export function AssignmentNotes({
             type="button"
             onClick={handleAdd}
             disabled={isPending || !body.trim()}
-            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+            className="whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             Add note
           </button>
@@ -175,7 +175,7 @@ function NoteItem({ note }: { note: NoteRow }) {
               type="button"
               onClick={handleSave}
               disabled={isPending || !draft.trim()}
-              className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="whitespace-nowrap rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               Save
             </button>

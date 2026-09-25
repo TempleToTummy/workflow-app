@@ -118,7 +118,7 @@ export function DashboardTable({
       </BulkBar>
       <BulkOutcome {...outcome} />
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
@@ -176,12 +176,12 @@ export function DashboardTable({
                       <Link href={r.href} className="text-ink-muted hover:text-accent">
                         {r.projectName}
                       </Link>
-                      <span className="tabular rounded-full bg-black/5 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                      <span className="count-pill bg-black/5 text-[10px] text-ink-muted">
                         {r.periodName}
                       </span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
-                      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-line">
+                      <div className="h-1.5 w-28 shrink-0 overflow-hidden rounded-full bg-line">
                         <div
                           className={`h-full rounded-full ${r.completed ? "bg-accent/50" : "bg-accent"}`}
                           style={{ width: `${r.progressPct}%` }}
@@ -194,7 +194,7 @@ export function DashboardTable({
                     <StatusBadge status={r.status} />
                   </td>
                   <td className="px-4 py-4 align-middle">
-                    <div className="flex items-center gap-2 text-ink-muted">
+                    <div className="flex items-center gap-2 whitespace-nowrap text-ink-muted">
                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-medium text-accent">
                         {initials(r.assigneeName)}
                       </span>
@@ -202,7 +202,7 @@ export function DashboardTable({
                     </div>
                   </td>
                   <td
-                    className={`px-4 py-4 align-middle tabular ${
+                    className={`tabular whitespace-nowrap px-4 py-4 align-middle ${
                       r.completed
                         ? "text-ink-muted"
                         : r.urgency === "overdue"

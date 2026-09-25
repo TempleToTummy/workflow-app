@@ -66,7 +66,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                   : null
               }
             />
-            <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
+            <main className="min-w-0 flex-1 overflow-x-clip">{children}</main>
           </>
         ) : (
           <main className="min-w-0 flex-1">{children}</main>

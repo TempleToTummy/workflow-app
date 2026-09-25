@@ -70,7 +70,7 @@ export function ForgotPasswordForm() {
       <button
         type="submit"
         disabled={isPending || !email.trim()}
-        className="mt-1 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+        className="mt-1 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
       >
         {isPending ? "Sending…" : "Send reset link"}
       </button>

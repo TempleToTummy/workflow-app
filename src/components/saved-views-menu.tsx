@@ -179,7 +179,7 @@ export function SavedViewsMenu({
                   <button
                     type="submit"
                     disabled={isPending || !name.trim()}
-                    className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+                    className="whitespace-nowrap rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
                   >
                     Save view
                   </button>

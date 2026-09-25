@@ -279,7 +279,7 @@ export function ProjectChecklistBuilder({
             is generated.
           </p>
         </div>
-        <span className="tabular text-xs text-ink-muted">
+        <span className="tabular shrink-0 whitespace-nowrap text-xs text-ink-muted">
           {order.length} {order.length === 1 ? "step" : "steps"}
         </span>
       </div>
@@ -432,7 +432,7 @@ export function ProjectChecklistBuilder({
           type="button"
           onClick={handleAdd}
           disabled={busy || !newName.trim()}
-          className="shrink-0 rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="shrink-0 whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {isPending ? "Saving…" : "Add task"}
         </button>

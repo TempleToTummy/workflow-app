@@ -37,7 +37,7 @@ export default async function ProjectActivityStatusPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -50,10 +50,18 @@ export default async function ProjectActivityStatusPage() {
       <div className="mt-6 flex flex-col gap-6">
         {groups.map(({ project, rows }) => (
           <div key={project.id} className="overflow-hidden rounded-lg border border-line bg-surface">
-            <div className="bg-accent-soft px-4 py-2 text-sm font-medium text-ink">
-              {project.name}
+            <div className="flex items-center gap-2 border-b border-line bg-accent-soft px-4 py-2.5 text-sm">
+              <span className="font-semibold text-ink">{project.name}</span>
+              <span className="count-pill bg-accent/10 text-accent">{rows.length}</span>
             </div>
-            <table className="w-full text-left text-sm">
+            {/* Fixed column widths so the tables for every service line up. */}
+            <table className="w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col />
+                <col className="w-44" />
+                <col className="w-36" />
+                <col className="w-36" />
+              </colgroup>
               <thead>
                 <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
                   <th className="px-4 py-2 font-medium">Client</th>
@@ -64,7 +72,7 @@ export default async function ProjectActivityStatusPage() {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.clientId} className="border-b border-line last:border-0">
+                  <tr key={r.clientId} className="border-b border-line last:border-0 hover:bg-black/[0.015]">
                     <td className="px-4 py-2">
                       <Link
                         href={`/clients/${r.clientId}`}

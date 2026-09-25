@@ -193,7 +193,9 @@ export function TimeEntryForm({
           type="button"
           onClick={submit}
           disabled={isPending || !valid}
-          className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          // py-1.5 + a 1px transparent border: the same height as the inputs
+          // beside it, so the row's controls share one top and bottom edge.
+          className="whitespace-nowrap rounded-full border border-transparent bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {isPending ? "Saving…" : "Log"}
         </button>

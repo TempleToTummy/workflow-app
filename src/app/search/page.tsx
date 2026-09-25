@@ -54,7 +54,7 @@ export default async function SearchPage({
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-8 py-8">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
       <p className="mt-1 text-sm text-ink-muted">
         Clients, contacts, services, tasks, comments, notes, files and email

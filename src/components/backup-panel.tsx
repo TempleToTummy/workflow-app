@@ -60,7 +60,7 @@ export function BackupPanel({
         )}
         <a
           href="/login"
-          className="mt-4 inline-block rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+          className="mt-4 inline-block whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
         >
           Sign in again
         </a>
@@ -91,7 +91,7 @@ export function BackupPanel({
         </label>
         <a
           href={`/api/backup${includeFiles ? "?files=1" : ""}`}
-          className="mt-4 inline-block rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+          className="mt-4 inline-block whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
         >
           Download backup
         </a>

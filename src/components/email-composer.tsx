@@ -341,7 +341,7 @@ export function EmailComposer({
           type="button"
           onClick={handleSend}
           disabled={!canSend}
-          className="rounded-full bg-accent px-5 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+          className="whitespace-nowrap rounded-full bg-accent px-5 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
         >
           {isPending ? "Sending…" : live ? "Send" : "Record message"}
         </button>

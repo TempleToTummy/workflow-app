@@ -28,7 +28,7 @@ export default async function AccountPage() {
   ]);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl px-8 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Account &amp; security</h1>
       <p className="mt-1 text-sm text-ink-muted">
         {user.firstName} {user.lastName} · {employee.email} ·{" "}

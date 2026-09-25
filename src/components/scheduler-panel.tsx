@@ -51,7 +51,7 @@ export function SchedulerPanel({ stale }: { stale: boolean }) {
           type="button"
           onClick={handleRun}
           disabled={isPending}
-          className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="shrink-0 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
           {isPending ? "Running…" : "Run now"}
         </button>

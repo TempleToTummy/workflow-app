@@ -47,7 +47,7 @@ export function AssignmentTabs({
           >
             {tab.label}
             {typeof count === "number" && count > 0 && (
-              <span className="tabular rounded-full bg-black/5 px-1.5 text-[11px] text-ink-muted">
+              <span className="count-pill bg-black/5 text-ink-muted">
                 {count}
               </span>
             )}

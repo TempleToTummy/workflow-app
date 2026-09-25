@@ -126,7 +126,7 @@ export function ClientRequestPanel({
   return (
     <div className="no-print rounded-lg border border-line bg-surface p-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold tracking-wide text-ink-muted uppercase">
+        <h2 className="text-xs font-semibold tracking-wide text-ink-muted uppercase">
           Client requests
         </h2>
         <button
@@ -213,7 +213,7 @@ export function ClientRequestPanel({
             type="button"
             onClick={submit}
             disabled={isPending || !title.trim()}
-            className="rounded-full bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+            className="whitespace-nowrap rounded-full bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {isPending ? "Creating…" : "Create link"}
           </button>
@@ -267,7 +267,7 @@ function IssuedLink({ url, emailed }: { url: string; emailed: string | null }) {
               setCopied(false);
             }
           }}
-          className="shrink-0 rounded-full bg-accent px-2 py-1 text-[11px] font-medium text-white"
+          className="shrink-0 whitespace-nowrap rounded-full bg-accent px-2 py-1 text-[11px] font-medium text-white"
         >
           {copied ? "Copied" : "Copy"}
         </button>

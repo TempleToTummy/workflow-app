@@ -80,8 +80,8 @@ export default async function ClientsPage({
     }`;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Client Project Information</h1>
           <p className="mt-1 text-sm text-ink-muted">
@@ -95,7 +95,7 @@ export default async function ClientsPage({
         {isAdmin && (
           <Link
             href="/clients/new"
-            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+            className="whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
           >
             New Client
           </Link>
@@ -107,11 +107,11 @@ export default async function ClientsPage({
           <div className="inline-flex rounded-md border border-line bg-surface p-0.5 shadow-sm">
             <Link href={href({ archived: null })} className={tabClass(!showArchived)}>
               Active
-              <span className="tabular rounded-full bg-black/5 px-1.5 text-[11px]">{activeCount}</span>
+              <span className="count-pill bg-black/5">{activeCount}</span>
             </Link>
             <Link href={href({ archived: "1" })} className={tabClass(showArchived)}>
               Archived
-              <span className="tabular rounded-full bg-black/5 px-1.5 text-[11px]">{archivedCount}</span>
+              <span className="count-pill bg-black/5">{archivedCount}</span>
             </Link>
           </div>
         ) : (

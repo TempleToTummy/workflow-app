@@ -83,7 +83,7 @@ export function ReportSkeleton({
   columns?: number;
 }) {
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <PageHeaderSkeleton />
       <div className="mt-6">
         <TableSkeleton rows={rows} columns={columns} />

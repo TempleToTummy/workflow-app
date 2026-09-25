@@ -29,11 +29,11 @@ export default async function ComposeEmailPage({
       : null;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl px-8 py-8">
       <Link href="/email" className="text-sm text-ink-muted hover:text-accent">
         ← All email
       </Link>
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">New message</h1>
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">New message</h1>
       <p className="mt-1 text-sm text-ink-muted">
         Attach the message to a client and project and it joins that
         engagement&apos;s thread, so replies come back to the same place.

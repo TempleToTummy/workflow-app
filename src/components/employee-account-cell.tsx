@@ -138,7 +138,10 @@ export function AccountCell({
           <button
             type="button"
             onClick={() => copy(token)}
-            title={inviteUrl(token)}
+            // The path, not inviteUrl(): the origin only exists in the browser,
+            // so using it here renders differently on the server and trips a
+            // hydration mismatch.
+            title={`/invite/${token}`}
             className="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-ink hover:bg-black/5"
           >
             {copied ? "Copied!" : "Copy link"}

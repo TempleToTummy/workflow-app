@@ -30,7 +30,7 @@ export default async function BackupPage() {
   const current = Object.fromEntries(SUMMARY_TABLES.map((t, i) => [t.table, counts[i]]));
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-4xl px-8 py-8">
       <Link href="/" className="text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -50,8 +50,12 @@ export default async function BackupPage() {
         {lastExport
           ? `Last backup downloaded ${formatDate(lastExport.createdAt)} by ${lastExport.actorLabel}.`
           : "No backup has been downloaded from this app yet."}
-        {!isRecent(lastExport?.createdAt) &&
-          " It's worth taking one now — and on a schedule with `npm run db:backup`."}
+        {!isRecent(lastExport?.createdAt) && (
+          <>
+            {" "}It&apos;s worth taking one now — and on a schedule with{" "}
+            <code className="rounded bg-black/5 px-1 py-0.5 font-mono text-xs">npm run db:backup</code>.
+          </>
+        )}
       </div>
 
       <BackupPanel current={current} summary={SUMMARY_TABLES} />

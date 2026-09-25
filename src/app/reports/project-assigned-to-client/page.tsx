@@ -11,7 +11,7 @@ export default async function ProjectAssignedToClientPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <Link href="/" className="no-print text-sm text-ink-muted hover:text-accent">
         ← Back to home
       </Link>
@@ -21,7 +21,7 @@ export default async function ProjectAssignedToClientPage() {
         reportKey="project-assigned-to-client"
       />
 
-      <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
@@ -48,10 +48,18 @@ export default async function ProjectAssignedToClientPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-ink-muted">{a.project.name}</td>
-                <td className="px-4 py-3 text-ink-muted">{a.active ? "Y" : "N"}</td>
-                <td className="px-4 py-3 text-ink-muted">{a.currentPeriod ?? "—"}</td>
-                <td className="px-4 py-3 text-ink-muted">{formatDueDate(a.startDate)}</td>
-                <td className="px-4 py-3 text-ink-muted">{formatDueDate(a.completedDate)}</td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                      a.active ? "bg-[var(--status-done-soft)] text-[var(--status-done)]" : "bg-black/5 text-ink-muted"
+                    }`}
+                  >
+                    {a.active ? "Active" : "Inactive"}
+                  </span>
+                </td>
+                <td className="tabular whitespace-nowrap px-4 py-3 text-ink-muted">{a.currentPeriod ?? "—"}</td>
+                <td className="tabular whitespace-nowrap px-4 py-3 text-ink-muted">{formatDueDate(a.startDate)}</td>
+                <td className="tabular whitespace-nowrap px-4 py-3 text-ink-muted">{formatDueDate(a.completedDate)}</td>
               </tr>
             ))}
             {assignments.length === 0 && (

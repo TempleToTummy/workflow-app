@@ -86,7 +86,7 @@ export default async function WorkloadPage() {
   const anyEstimates = people.some((p) => p.summary.estimatedCount > 0);
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-8 py-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Workload</h1>
@@ -134,7 +134,7 @@ export default async function WorkloadPage() {
         </p>
       )}
 
-      <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs tracking-wide text-ink-muted uppercase">
