@@ -120,6 +120,20 @@ function printReport(report: ImportReport) {
         `  • The first time the app runs work generation it will create about ${c.rows} Not Started tasks for ` +
           `${c.engagements} active engagements: ${c.periods} new periods up to today, plus steps missing from their current period.`
       );
+      const b = c.breakdown;
+      const part = (label: string, v: { engagements: number; rows: number }) =>
+        v.rows ? line(`      ${label.padEnd(48)} ${String(v.rows).padStart(7)} tasks, ${v.engagements} engagements`) : undefined;
+      line("    Where they come from:");
+      if (b.newPeriods) line(`      ${"new periods between KTAX's current one and today".padEnd(48)} ${String(b.newPeriods).padStart(7)} tasks`);
+      part("current period has NO rows in KTAX", b.currentPeriodEmpty);
+      part("current period is missing some steps in KTAX", b.currentPeriodGaps);
+      if (b.noCurrentPeriod.rows || b.createSubtaskOff.rows) {
+        line("    Overlapping with the above:");
+        part("CURRENT_PERIOD blank in KTAX (starts at today)", b.noCurrentPeriod);
+        part("CREATE_SUBTASK = N in KTAX", b.createSubtaskOff);
+      }
+      line("    By service:");
+      for (const p of b.byProject) line(`      ${p.project.padEnd(48)} ${String(p.rows).padStart(7)} tasks, ${p.engagements} engagements`);
       line("    That's normal if KTAX was up to date. If the number looks too big, some engagements are probably");
       line("    marked active in KTAX but no longer worked — say so before committing.");
     }

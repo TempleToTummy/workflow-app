@@ -302,7 +302,22 @@ export type ImportReport = {
   periodRenames: { from: string; to: string }[];
   // What the scheduler will generate the first time the app runs after the
   // import, so a flood of "late" rows isn't a surprise.
-  catchUp: { engagements: number; periods: number; rows: number; tooFarBehind: number };
+  catchUp: {
+    engagements: number;
+    periods: number;
+    rows: number;
+    tooFarBehind: number;
+    // Where those rows come from, so an unexpectedly big number can be
+    // traced to a cause before anything is committed.
+    breakdown: {
+      newPeriods: number; // rows in periods after the current one, up to today
+      currentPeriodEmpty: { engagements: number; rows: number }; // KTAX has no rows at all for it
+      currentPeriodGaps: { engagements: number; rows: number }; // KTAX has some of the steps
+      noCurrentPeriod: { engagements: number; rows: number }; // CURRENT_PERIOD blank in KTAX
+      createSubtaskOff: { engagements: number; rows: number }; // CREATE_SUBTASK = N in KTAX
+      byProject: { project: string; engagements: number; rows: number }[];
+    };
+  };
 };
 
 class Issues {
@@ -1095,6 +1110,18 @@ export function transformKtax(source: SourceTables, ctx: ImportContext): ImportR
     const p = String(tm.projectId);
     stepsPerProject.set(p, [...(stepsPerProject.get(p) ?? []), String(tm.subTaskId)]);
   }
+  const periodsWithRows = new Set<string>();
+  for (const c of activities.values()) {
+    periodsWithRows.add(`${c.row.clientId}|${c.row.projectId}|${c.row.periodName}`);
+  }
+  const bd = {
+    newPeriods: 0,
+    currentPeriodEmpty: { engagements: 0, rows: 0 },
+    currentPeriodGaps: { engagements: 0, rows: 0 },
+    noCurrentPeriod: { engagements: 0, rows: 0 },
+    createSubtaskOff: { engagements: 0, rows: 0 },
+  };
+  const perProject = new Map<string, { engagements: number; rows: number }>();
   const catchUp = { engagements: 0, periods: 0, rows: 0, tooFarBehind: 0 };
   for (const a of assignments.values()) {
     if (!a.active) continue;
@@ -1119,17 +1146,50 @@ export function transformKtax(source: SourceTables, ctx: ImportContext): ImportR
       continue;
     }
     let missing = 0;
-    for (const period of walk) {
+    let missingInCurrent = 0;
+    walk.forEach((period, i) => {
       for (const subTaskId of steps) {
-        if (!activities.has(`${clientId}|${projectId}|${subTaskId}|${period}`)) missing += 1;
+        if (!activities.has(`${clientId}|${projectId}|${subTaskId}|${period}`)) {
+          missing += 1;
+          if (i === 0) missingInCurrent += 1;
+        }
       }
-    }
+    });
     if (missing > 0) {
       catchUp.engagements += 1;
       catchUp.periods += walk.length - 1;
       catchUp.rows += missing;
+      bd.newPeriods += missing - missingInCurrent;
+      if (missingInCurrent > 0) {
+        const bucket = periodsWithRows.has(`${clientId}|${projectId}|${walk[0]}`)
+          ? bd.currentPeriodGaps
+          : bd.currentPeriodEmpty;
+        bucket.engagements += 1;
+        bucket.rows += missingInCurrent;
+      }
+      if (!a.currentPeriod) {
+        bd.noCurrentPeriod.engagements += 1;
+        bd.noCurrentPeriod.rows += missing;
+      }
+      if (a.createSubtask === false) {
+        bd.createSubtaskOff.engagements += 1;
+        bd.createSubtaskOff.rows += missing;
+      }
+      const pp = perProject.get(info.name) ?? { engagements: 0, rows: 0 };
+      pp.engagements += 1;
+      pp.rows += missing;
+      perProject.set(info.name, pp);
     }
   }
+  const catchUpReport = {
+    ...catchUp,
+    breakdown: {
+      ...bd,
+      byProject: [...perProject.entries()]
+        .map(([project, v]) => ({ project, ...v }))
+        .sort((x, y) => y.rows - x.rows),
+    },
+  };
 
   // --- Assemble -------------------------------------------------------------------------------
   const tables = Object.fromEntries(BACKUP_TABLES.map((t) => [t, [] as Row[]])) as Record<BackupTable, Row[]>;
@@ -1199,7 +1259,7 @@ export function transformKtax(source: SourceTables, ctx: ImportContext): ImportR
       statusMapping,
       recurringMapping,
       periodRenames,
-      catchUp,
+      catchUp: catchUpReport,
     },
   };
 }

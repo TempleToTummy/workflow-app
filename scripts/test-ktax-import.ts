@@ -333,7 +333,20 @@ section("transform: catch-up estimate");
   // sits at 2026-Q2 with its one step done, so 2026-Q3 needs one row. Client
   // 2's sales tax has no current period, so it starts at 2026-Q3: one row.
   const { report } = transformKtax(withCounts(source()), ctx());
-  check("rows the scheduler will create", report.catchUp, { engagements: 3, periods: 2, rows: 3, tooFarBehind: 0 });
+  const { breakdown, ...totals } = report.catchUp;
+  check("rows the scheduler will create", totals, { engagements: 3, periods: 2, rows: 3, tooFarBehind: 0 });
+  // Client 1's current 2026-08 is complete; 2026-09 is a new period missing
+  // one step. Client 3's 2026-Q3 is a new period. Client 2's sales tax has no
+  // current period, so today's period is its current one, and it's empty.
+  check("breakdown: new periods", breakdown.newPeriods, 2);
+  check("breakdown: empty current period", breakdown.currentPeriodEmpty, { engagements: 1, rows: 1 });
+  check("breakdown: gaps in the current period", breakdown.currentPeriodGaps, { engagements: 0, rows: 0 });
+  check("breakdown: no current period in KTAX", breakdown.noCurrentPeriod, { engagements: 1, rows: 1 });
+  check("breakdown: by project", breakdown.byProject.map((p) => [p.project, p.rows]), [["Sales Tax", 2], ["Bookkeeping", 1]]);
+
+  const off = withCounts(source());
+  off.PROJECT_CLIENT_MAP = off.PROJECT_CLIENT_MAP.map((r) => (r.CURRENT_PERIOD === "AUG-2026" ? { ...r, CREATE_SUBTASK: "N" } : r));
+  check("breakdown: CREATE_SUBTASK = N counted", transformKtax(off, ctx()).report.catchUp.breakdown.createSubtaskOff, { engagements: 1, rows: 1 });
 
   const old = withCounts(source());
   old.PROJECT_CLIENT_MAP = old.PROJECT_CLIENT_MAP.map((r) => (r.CURRENT_PERIOD === "AUG-2026" ? { ...r, CURRENT_PERIOD: "2016-01" } : r));
