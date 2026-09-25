@@ -41,3 +41,8 @@ next-env.d.ts
 
 # backups (pre-restore snapshots and CLI output) — contain every client's data
 /backups
+
+# the KTAX export (scripts/import-ktax.ts) — every client's data, never commit
+ktax_export*
+_ROW_COUNTS.csv
+/imports

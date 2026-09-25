@@ -853,6 +853,17 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
 - Bulk and search share the in-memory rate limiter's caveats (per process).
 - next@16.3.1 has a published security advisory (`npm audit`); upgrading Next is
   a separate change from this work.
+- KTAX import (`npm run import:ktax`, src/lib/ktax-import.ts). Deliberate
+  choices: it builds a backup file and goes through restoreBackup, so it
+  REPLACES everything (re-runnable at cutover, never merges); ids are
+  deterministic (`ktax-client-123`) so a KTAX id can be traced; source period
+  names are renamed to the app's format from their start dates, because the
+  scheduler can only walk forward from names it parses; KTAX usernames are
+  matched to employees for completedBy only on an exact email/name match;
+  dashed SSNs in free text are redacted, bare 9-digit runs only reported.
+  Status and cadence codes were unknown when this was written — the dry run
+  refuses anything not in the table of obvious spellings. CLIENT_TAX_EXTENSION
+  is not imported (no model yet).
 - The scheduler has no locking beyond the in-process `inFlight` guard in
   ensurePeriodsCurrent. Two instances running the job at the same moment is
   safe (every write is a diff against existing rows) but would both log a run.

@@ -143,6 +143,36 @@ npm run db:restore -- backups/<file>.json --yes  # replace all data
 Set `BACKUP_DIR` to put backups somewhere that outlives the server. The file
 holds client tax IDs, contacts and password hashes — store it like the database.
 
+## Importing from KTAX (Oracle APEX)
+
+The live data comes across from the old app in two steps: a throwaway APEX page
+exports the 14 tables this app uses to `ktax_export.zip` (one CSV per table plus
+`_ROW_COUNTS.csv`; SSN and password columns are dropped at the source), and this
+command loads it.
+
+```bash
+npm run import:ktax -- ~/Downloads/ktax_export.zip            # dry run: report only
+npm run import:ktax -- ~/Downloads/ktax_export.zip --commit   # replace all data
+```
+
+The dry run prints what it will do and changes nothing: row counts per table
+checked against `_ROW_COUNTS.csv`, how each KTAX task status and cadence maps
+across (check these), any rows it will skip or merge (with KTAX ids), SSNs it
+found in notes, and how many tasks the scheduler will generate afterwards. It
+refuses to run (and says why) if a file is incomplete, a status or cadence has
+no obvious meaning, or there's no admin to sign in with. Map those by hand with
+`--status "VALUE=DONE"` or `--recurring "7=MONTHLY"`.
+
+`--commit` works like a restore: it **replaces everything**, snapshots the
+current data to `backups/` first, runs in one transaction and signs everyone
+out. Admin logins, email templates and project due-date rules are kept.
+Imported employees have no password yet; invite them from Admin → Employees.
+Because it replaces everything, run it again at cutover with a fresh export —
+but not after people have started working in this app.
+
+The export holds every client's data: don't commit it, email it or leave it in
+Downloads. The rules are in `src/lib/ktax-import.ts`.
+
 ## Two-factor authentication and sessions
 
 Everyone has an **Account & security** page (click your name at the bottom of the
