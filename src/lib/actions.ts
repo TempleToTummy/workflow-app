@@ -16,7 +16,12 @@ import {
 import { resolveDefaultAssignees } from "@/lib/default-assignees";
 import { formatMinutes } from "@/lib/time";
 import { recordAudit, recordAuditMany, actorFrom, AUDIT, STATUS_WORDS } from "@/lib/audit";
-import { objectStore, documentStorageKey, DEFAULT_BUCKET } from "@/lib/storage";
+import { objectStore } from "@/lib/storage";
+import { storeDocumentBytes } from "@/lib/document-vault";
+import { checkUpload, checkContent } from "@/lib/file-safety";
+import { decryptField } from "@/lib/encryption";
+import { maskSsn, maskTaxId, protectSsn, protectTaxId } from "@/lib/sensitive-fields";
+import { rateLimit } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/auth";
 import {
   requireActivityAccess,
@@ -119,7 +124,10 @@ export type ClientFormInput = {
   zipcode?: string;
   phone?: string;
   fax?: string;
+  // Write-only. A new tax ID to store (encrypted); blank leaves the current
+  // one untouched, because the form never receives the current value.
   taxId?: string;
+  clearTaxId?: boolean;
   email?: string;
   note?: string;
   coRegDate?: string; // yyyy-mm-dd from a date input
@@ -143,13 +151,28 @@ function normalizeClientInput(data: ClientFormInput) {
     zipcode: data.zipcode?.trim() || null,
     phone: data.phone?.trim() || null,
     fax: data.fax?.trim() || null,
-    taxId: data.taxId?.trim() || null,
+    ...taxIdChanges(data),
     email: data.email?.trim() || null,
     note: data.note?.trim() || null,
     coRegDate: data.coRegDate ? new Date(data.coRegDate) : null,
     coRegState: data.coRegState?.trim() || null,
     renewMonth: data.renewMonth?.trim() || null,
   };
+}
+
+// The tax ID columns to write, if any. Nothing when the field was left blank —
+// the form can't prefill a value it's never sent, so blank means "keep".
+function taxIdChanges(data: ClientFormInput) {
+  const raw = data.taxId?.trim();
+  if (raw) return protectTaxId(raw);
+  if (data.clearTaxId) return { taxIdEncrypted: null, taxIdLast4: null, taxIdIndex: null };
+  return {};
+}
+
+// What goes back to the browser after a save. Never the row itself: that
+// would ship ciphertext and index values to the client for no reason.
+function clientSummary(client: { id: string; companyName: string }) {
+  return { id: client.id, companyName: client.companyName };
 }
 
 // Prisma known-request-error codes: P2002 = unique constraint, P2003 = FK
@@ -181,9 +204,19 @@ export async function createClient(data: ClientFormInput) {
       clientId: client.id,
       contextLabel: client.companyName,
     });
+    if (values.taxIdEncrypted) {
+      await recordAudit({
+        entityType: "Client",
+        entityId: client.id,
+        action: AUDIT.SENSITIVE_CHANGED,
+        summary: `Set ${client.companyName}'s tax ID (${maskTaxId(values.taxIdLast4)})`,
+        clientId: client.id,
+        contextLabel: client.companyName,
+      });
+    }
     revalidatePath("/clients");
     revalidatePath("/activity");
-    return client;
+    return clientSummary(client);
   } catch (err) {
     rethrowFriendly(err, { unique: "That Tax ID is already in use by another client." });
   }
@@ -192,6 +225,7 @@ export async function createClient(data: ClientFormInput) {
 export async function updateClient(clientId: string, data: ClientFormInput) {
   await requireClientAccess(clientId);
   const values = normalizeClientInput(data);
+  const taxIdChanged = "taxIdEncrypted" in values;
   try {
     const client = await prisma.client.update({
       where: { id: clientId },
@@ -205,10 +239,22 @@ export async function updateClient(clientId: string, data: ClientFormInput) {
       clientId,
       contextLabel: client.companyName,
     });
+    if (taxIdChanged) {
+      await recordAudit({
+        entityType: "Client",
+        entityId: clientId,
+        action: AUDIT.SENSITIVE_CHANGED,
+        summary: values.taxIdEncrypted
+          ? `Changed ${client.companyName}'s tax ID (now ${maskTaxId(values.taxIdLast4)})`
+          : `Removed ${client.companyName}'s tax ID`,
+        clientId,
+        contextLabel: client.companyName,
+      });
+    }
     revalidatePath("/clients");
     revalidatePath(`/clients/${clientId}`);
     revalidatePath("/activity");
-    return client;
+    return clientSummary(client);
   } catch (err) {
     rethrowFriendly(err, { unique: "That Tax ID is already in use by another client." });
   }
@@ -488,9 +534,10 @@ export async function assignProjectToClient(
 
 // --- Client contacts --------------------------------------------------------
 //
-// CorpContact create/edit/delete. ssnEncrypted is deliberately not exposed
-// here: it has no encryption behind it yet, so no UI should be inviting SSNs
-// in until that exists (see PROJECT_NOTES.md).
+// CorpContact create/edit/delete. The SSN is write-only from the browser's
+// side: a new value is encrypted here (src/lib/sensitive-fields.ts), blank
+// keeps the stored one, and nothing ever sends the stored value back except
+// revealContactSsn, which is audited.
 
 export type ContactInput = {
   firstName?: string;
@@ -498,10 +545,22 @@ export type ContactInput = {
   mobile?: string;
   email?: string;
   note?: string;
+  ssn?: string;
+  clearSsn?: boolean;
 };
 
-function normalizeContactInput(data: ContactInput) {
-  const values = {
+type ContactWrite = {
+  firstName: string | null;
+  lastName: string | null;
+  mobile: string | null;
+  email: string | null;
+  note: string | null;
+  ssnEncrypted?: string | null;
+  ssnLast4?: string | null;
+};
+
+function normalizeContactInput(data: ContactInput): ContactWrite {
+  const values: ContactWrite = {
     firstName: data.firstName?.trim() || null,
     lastName: data.lastName?.trim() || null,
     mobile: data.mobile?.trim() || null,
@@ -511,16 +570,44 @@ function normalizeContactInput(data: ContactInput) {
   if (!values.firstName && !values.lastName && !values.email && !values.mobile) {
     throw new Error("A contact needs at least a name, email, or mobile number.");
   }
+  const ssn = data.ssn?.trim();
+  if (ssn) return { ...values, ...protectSsn(ssn) };
+  if (data.clearSsn) return { ...values, ssnEncrypted: null, ssnLast4: null };
   return values;
+}
+
+function contactSummary(c: { id: string; clientId: string; ssnLast4: string | null }) {
+  return { id: c.id, clientId: c.clientId, ssnMasked: maskSsn(c.ssnLast4) };
+}
+
+function contactName(c: { firstName: string | null; lastName: string | null; email: string | null }) {
+  return [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || "a contact";
+}
+
+async function auditSsnChange(
+  contact: { id: string; clientId: string; firstName: string | null; lastName: string | null; email: string | null },
+  values: { ssnEncrypted?: string | null; ssnLast4?: string | null }
+) {
+  if (!("ssnEncrypted" in values)) return;
+  await recordAudit({
+    entityType: "CorpContact",
+    entityId: contact.id,
+    action: AUDIT.SENSITIVE_CHANGED,
+    summary: values.ssnEncrypted
+      ? `Set the SSN for ${contactName(contact)} (${maskSsn(values.ssnLast4)})`
+      : `Removed the SSN for ${contactName(contact)}`,
+    clientId: contact.clientId,
+  });
 }
 
 export async function createContact(clientId: string, data: ContactInput) {
   await requireClientAccess(clientId);
   const values = normalizeContactInput(data);
   const contact = await prisma.corpContact.create({ data: { clientId, ...values } });
+  await auditSsnChange(contact, values);
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/reports/client-information-list");
-  return contact;
+  return contactSummary(contact);
 }
 
 // A contact id alone says nothing about access, so resolve it to its client
@@ -538,14 +625,78 @@ export async function updateContact(contactId: string, data: ContactInput) {
   await requireContactAccess(contactId);
   const values = normalizeContactInput(data);
   const contact = await prisma.corpContact.update({ where: { id: contactId }, data: values });
+  await auditSsnChange(contact, values);
   revalidatePath(`/clients/${contact.clientId}`);
-  return contact;
+  return contactSummary(contact);
 }
 
 export async function deleteContact(contactId: string) {
   await requireContactAccess(contactId);
   const contact = await prisma.corpContact.delete({ where: { id: contactId } });
   revalidatePath(`/clients/${contact.clientId}`);
+}
+
+// --- Revealing a full tax ID / SSN ---------------------------------------------
+//
+// The only two ways a full number leaves the server. Anyone who can open the
+// client may reveal, but every reveal is an audit row naming who and when, and
+// reveals are rate limited so a compromised account can't walk the client
+// list pulling every SSN — 30 in 10 minutes is far above real use.
+
+const REVEAL_LIMIT = { limit: 30, windowMs: 10 * 60_000 };
+
+function checkRevealLimit(userId: string) {
+  const limit = rateLimit(`reveal:${userId}`, REVEAL_LIMIT);
+  if (!limit.ok) {
+    throw new Error(`Too many sensitive values viewed in a short time. Try again in ${limit.retryAfterSeconds}s.`);
+  }
+}
+
+export async function revealClientTaxId(clientId: string): Promise<string> {
+  const user = await requireClientAccess(clientId);
+  checkRevealLimit(user.id);
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { companyName: true, taxIdEncrypted: true, taxIdLast4: true },
+  });
+  if (!client?.taxIdEncrypted) throw new Error("This client has no tax ID on file.");
+  const value = decryptField(client.taxIdEncrypted, "Client.taxId");
+  await recordAudit({
+    entityType: "Client",
+    entityId: clientId,
+    action: AUDIT.SENSITIVE_REVEALED,
+    summary: `Viewed ${client.companyName}'s full tax ID (${maskTaxId(client.taxIdLast4)})`,
+    clientId,
+    contextLabel: client.companyName,
+    actor: actorFrom(user),
+  });
+  return value;
+}
+
+export async function revealContactSsn(contactId: string): Promise<string> {
+  const existing = await prisma.corpContact.findUnique({
+    where: { id: contactId },
+    select: { clientId: true },
+  });
+  if (!existing) throw new Error("That contact no longer exists.");
+  const user = await requireClientAccess(existing.clientId);
+  checkRevealLimit(user.id);
+  const contact = await prisma.corpContact.findUnique({
+    where: { id: contactId },
+    include: { client: { select: { companyName: true } } },
+  });
+  if (!contact?.ssnEncrypted) throw new Error("This contact has no SSN on file.");
+  const value = decryptField(contact.ssnEncrypted, "CorpContact.ssn");
+  await recordAudit({
+    entityType: "CorpContact",
+    entityId: contactId,
+    action: AUDIT.SENSITIVE_REVEALED,
+    summary: `Viewed the full SSN for ${contactName(contact)} (${maskSsn(contact.ssnLast4)})`,
+    clientId: contact.clientId,
+    contextLabel: contact.client.companyName,
+    actor: actorFrom(user),
+  });
+  return value;
 }
 
 // --- Lookups: Corporation Type / Business Type -----------------------------
@@ -1368,11 +1519,11 @@ export async function deleteAssignmentNote(id: string) {
   revalidateAssignment(deleted.clientId, deleted.projectId);
 }
 
-// Files tab. Bytes go to the ObjectStore (local disk today, Supabase Storage
-// later — see src/lib/storage.ts); the Document row is the catalog entry.
-// The row id is generated up front so it can seed a collision-proof storage
-// key, and the bytes are written before the row so a failure can never leave a
-// Document pointing at nothing.
+// Files tab. Every upload is checked (allow-listed type, and bytes that match
+// it — src/lib/file-safety.ts), then encrypted with its own key before it goes
+// to storage (src/lib/document-vault.ts). The row id is generated up front
+// because it's bound into the ciphertext, and the bytes are written before the
+// row so a failure can never leave a Document pointing at nothing.
 export async function uploadDocument(formData: FormData) {
   const clientId = String(formData.get("clientId") ?? "");
   const projectId = String(formData.get("projectId") ?? "");
@@ -1387,12 +1538,26 @@ export async function uploadDocument(formData: FormData) {
     throw new Error("Choose a file to upload.");
   }
 
-  const id = randomUUID();
-  const storageKey = documentStorageKey(clientId, projectId, id, file.name);
-  const mimeType = file.type || "application/octet-stream";
+  const named = checkUpload({ name: file.name, size: file.size });
+  if (!named.ok) throw new Error(named.reason);
   const bytes = Buffer.from(await file.arrayBuffer());
+  const verdict = checkContent(named.filename, bytes);
+  if (!verdict.ok) {
+    await recordAudit({
+      entityType: "Document",
+      entityId: "rejected",
+      action: AUDIT.DOCUMENT_REJECTED,
+      summary: `Refused an upload named "${named.filename}": ${verdict.reason}`,
+      clientId,
+      projectId,
+      periodName,
+      actor: actorFrom(user),
+    });
+    throw new Error(verdict.reason);
+  }
 
-  await objectStore.put(DEFAULT_BUCKET, storageKey, bytes, mimeType);
+  const id = randomUUID();
+  const stored = await storeDocumentBytes({ documentId: id, clientId, bytes });
   try {
     await prisma.document.create({
       data: {
@@ -1401,30 +1566,53 @@ export async function uploadDocument(formData: FormData) {
         projectId,
         periodName,
         uploadedById,
-        filename: file.name,
-        mimeType,
-        size: file.size,
-        bucket: DEFAULT_BUCKET,
-        storageKey,
+        filename: verdict.filename,
+        mimeType: verdict.mimeType,
+        size: bytes.length,
+        ...stored,
       },
     });
   } catch (err) {
-    await objectStore.remove(DEFAULT_BUCKET, storageKey).catch(() => {});
+    await objectStore.remove(stored.bucket, stored.storageKey).catch(() => {});
     rethrowFriendly(err, { foreignKey: "That client or project no longer exists." });
   }
 
+  await recordAudit({
+    entityType: "Document",
+    entityId: id,
+    action: AUDIT.DOCUMENT_UPLOADED,
+    summary: `Uploaded "${verdict.filename}"`,
+    clientId,
+    projectId,
+    periodName,
+    actor: actorFrom(user),
+  });
   revalidateAssignment(clientId, projectId);
 }
 
+// The row goes first: it holds the file's only wrapped key, so once it's gone
+// the object is unreadable ciphertext even if removing it from storage fails.
 export async function deleteDocument(id: string) {
   const existing = await prisma.document.findUnique({
     where: { id },
     select: { clientId: true, projectId: true },
   });
   if (!existing) throw new Error("That file no longer exists.");
-  await requireEngagementAccess(existing.clientId, existing.projectId);
+  const user = await requireEngagementAccess(existing.clientId, existing.projectId);
   const doc = await prisma.document.delete({ where: { id } });
-  await objectStore.remove(doc.bucket, doc.storageKey).catch(() => {});
+  await objectStore.remove(doc.bucket, doc.storageKey).catch((err) => {
+    console.error(`[documents] deleted row ${doc.id} but couldn't remove its object; its key is already destroyed`, err);
+  });
+  await recordAudit({
+    entityType: "Document",
+    entityId: doc.id,
+    action: AUDIT.DOCUMENT_DELETED,
+    summary: `Deleted "${doc.filename}"`,
+    clientId: doc.clientId,
+    projectId: doc.projectId,
+    periodName: doc.periodName,
+    actor: actorFrom(user),
+  });
   revalidateAssignment(doc.clientId, doc.projectId);
 }
 

@@ -70,6 +70,15 @@ export const AUDIT = {
   CLIENT_RESTORED: "client.restored",
   CLIENT_DELETED: "client.deleted",
   CLIENT_TAGS_CHANGED: "client.tags_changed",
+  // Files and sensitive data. Every access to a client document or a full
+  // tax ID / SSN leaves a row — who, what, when — which is the access log the
+  // FTC Safeguards Rule and IRS Pub 4557 expect a firm to be able to produce.
+  DOCUMENT_UPLOADED: "document.uploaded",
+  DOCUMENT_DOWNLOADED: "document.downloaded",
+  DOCUMENT_DELETED: "document.deleted",
+  DOCUMENT_REJECTED: "document.rejected",
+  SENSITIVE_REVEALED: "sensitive.revealed",
+  SENSITIVE_CHANGED: "sensitive.changed",
   // Data safety
   BACKUP_EXPORTED: "backup.exported",
   BACKUP_RESTORED: "backup.restored",
@@ -213,6 +222,12 @@ const ACTION_META: Record<string, { label: string; tone: "neutral" | "good" | "w
   [AUDIT.CLIENT_RESTORED]: { label: "Client restored", tone: "good" },
   [AUDIT.CLIENT_DELETED]: { label: "Client removed", tone: "bad" },
   [AUDIT.CLIENT_TAGS_CHANGED]: { label: "Tags", tone: "neutral" },
+  [AUDIT.DOCUMENT_UPLOADED]: { label: "File uploaded", tone: "good" },
+  [AUDIT.DOCUMENT_DOWNLOADED]: { label: "File downloaded", tone: "neutral" },
+  [AUDIT.DOCUMENT_DELETED]: { label: "File deleted", tone: "bad" },
+  [AUDIT.DOCUMENT_REJECTED]: { label: "Upload refused", tone: "warn" },
+  [AUDIT.SENSITIVE_REVEALED]: { label: "Sensitive data viewed", tone: "warn" },
+  [AUDIT.SENSITIVE_CHANGED]: { label: "Sensitive data changed", tone: "warn" },
   [AUDIT.BACKUP_EXPORTED]: { label: "Backup downloaded", tone: "warn" },
   [AUDIT.BACKUP_RESTORED]: { label: "Backup restored", tone: "bad" },
 };

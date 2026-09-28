@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createContact, updateContact, deleteContact, type ContactInput } from "@/lib/actions";
+import { SensitiveValue } from "@/components/sensitive-value";
 
 export type Contact = {
   id: string;
@@ -11,12 +12,15 @@ export type Contact = {
   mobile: string | null;
   email: string | null;
   note: string | null;
+  // "•••-••-1234", or null when no SSN is on file. The full number is never
+  // sent to the browser except through SensitiveValue's audited reveal.
+  ssnMasked: string | null;
 };
 
 const inputClass =
   "w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
 
-const EMPTY: ContactInput = { firstName: "", lastName: "", mobile: "", email: "", note: "" };
+const EMPTY: ContactInput = { firstName: "", lastName: "", mobile: "", email: "", note: "", ssn: "" };
 
 function initials(c: Contact): string {
   const a = c.firstName?.[0] ?? "";
@@ -28,10 +32,12 @@ function ContactFields({
   value,
   onChange,
   disabled,
+  ssnMasked = null,
 }: {
   value: ContactInput;
   onChange: (next: ContactInput) => void;
   disabled: boolean;
+  ssnMasked?: string | null;
 }) {
   const set = (k: keyof ContactInput) => (e: React.ChangeEvent<HTMLInputElement>) =>
     onChange({ ...value, [k]: e.target.value });
@@ -42,6 +48,32 @@ function ContactFields({
       <input value={value.mobile ?? ""} onChange={set("mobile")} disabled={disabled} placeholder="Mobile" className={inputClass} />
       <input value={value.email ?? ""} onChange={set("email")} disabled={disabled} placeholder="Email" type="email" className={inputClass} />
       <input value={value.note ?? ""} onChange={set("note")} disabled={disabled} placeholder="Note (role, best time to reach…)" className={`sm:col-span-2 ${inputClass}`} />
+      {/* Write-only and never prefilled: the stored SSN is encrypted and isn't
+          sent to the browser. A new value replaces it; blank keeps it. */}
+      <input
+        value={value.ssn ?? ""}
+        onChange={set("ssn")}
+        disabled={disabled || value.clearSsn}
+        placeholder={ssnMasked ? `SSN ${ssnMasked} — leave blank to keep` : "SSN (optional)"}
+        inputMode="numeric"
+        autoComplete="off"
+        spellCheck={false}
+        className={inputClass}
+      />
+      <div className="flex items-center gap-3 text-xs text-ink-muted">
+        {ssnMasked && (
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={Boolean(value.clearSsn)}
+              onChange={(e) => onChange({ ...value, ssn: "", clearSsn: e.target.checked })}
+              disabled={disabled}
+            />
+            Remove SSN
+          </label>
+        )}
+        <span>Stored encrypted; only the last four are shown.</span>
+      </div>
     </div>
   );
 }
@@ -60,6 +92,8 @@ function ContactRow({ contact }: { contact: Contact }) {
       mobile: contact.mobile ?? "",
       email: contact.email ?? "",
       note: contact.note ?? "",
+      ssn: "",
+      clearSsn: false,
     });
     setError(null);
     setEditing(true);
@@ -95,7 +129,7 @@ function ContactRow({ contact }: { contact: Contact }) {
   if (editing) {
     return (
       <li className="rounded-md border border-accent/40 bg-accent-soft/40 p-3">
-        <ContactFields value={draft} onChange={setDraft} disabled={isPending} />
+        <ContactFields value={draft} onChange={setDraft} disabled={isPending} ssnMasked={contact.ssnMasked} />
         <div className="mt-2 flex items-center gap-3">
           <button
             type="button"
@@ -131,6 +165,11 @@ function ContactRow({ contact }: { contact: Contact }) {
           {[contact.email, contact.mobile].filter(Boolean).join(" · ") || "No email or mobile"}
         </p>
         {contact.note && <p className="mt-0.5 text-xs text-ink-muted">{contact.note}</p>}
+        {contact.ssnMasked && (
+          <p className="mt-0.5 text-xs text-ink-muted">
+            SSN <SensitiveValue kind="ssn" id={contact.id} masked={contact.ssnMasked} />
+          </p>
+        )}
         {error && <p className="mt-1 text-xs text-overdue">{error}</p>}
       </div>
       <div className="flex shrink-0 items-center gap-3 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">

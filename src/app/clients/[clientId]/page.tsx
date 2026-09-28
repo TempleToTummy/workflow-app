@@ -5,6 +5,8 @@ import { ArchiveClientButton, ArchivedClientBanner } from "@/components/client-a
 import { ClientTagEditor } from "@/components/client-tag-editor";
 import { AssignProjectPanel } from "@/components/assign-project-panel";
 import { ContactManager } from "@/components/contact-manager";
+import { SensitiveValue } from "@/components/sensitive-value";
+import { maskSsn, maskTaxId } from "@/lib/sensitive-fields";
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { formatBytes, formatDate } from "@/lib/dates";
 import { redirect } from "next/navigation";
@@ -223,7 +225,9 @@ export default async function ClientDetailPage({
           </div>
           <div>
             <dt className="mb-0.5 text-xs text-ink-muted">Tax ID (FIN)</dt>
-            <dd className="text-ink">{client.taxId ?? "—"}</dd>
+            <dd className="text-ink">
+              <SensitiveValue kind="taxId" id={client.id} masked={maskTaxId(client.taxIdLast4)} />
+            </dd>
           </div>
           <div>
             <dt className="mb-0.5 text-xs text-ink-muted">Address</dt>
@@ -266,6 +270,7 @@ export default async function ClientDetailPage({
             mobile: c.mobile,
             email: c.email,
             note: c.note,
+            ssnMasked: maskSsn(c.ssnLast4),
           }))}
         />
       </div>

@@ -73,10 +73,10 @@ check("an expired link that did get files reports the files", describeRequest({ 
 check("revoked", describeRequest({ ...base, kind: "UPLOAD", status: "CANCELLED" }), { label: "Revoked", tone: "bad" });
 
 section("upload allow-list");
-check("a pdf is fine", checkUpload({ name: "statement.pdf", size: 1000 }), { ok: true });
-check("a spreadsheet is fine", checkUpload({ name: "ledger.xlsx", size: 1000 }), { ok: true });
-check("a phone photo is fine", checkUpload({ name: "receipt.HEIC", size: 1000 }), { ok: true });
-check("case in the extension doesn't matter", checkUpload({ name: "SCAN.PDF", size: 1000 }), { ok: true });
+check("a pdf is fine", checkUpload({ name: "statement.pdf", size: 1000 }).ok, true);
+check("a spreadsheet is fine", checkUpload({ name: "ledger.xlsx", size: 1000 }).ok, true);
+check("a phone photo is fine", checkUpload({ name: "receipt.HEIC", size: 1000 }).ok, true);
+check("case in the extension doesn't matter", checkUpload({ name: "SCAN.PDF", size: 1000 }).ok, true);
 check("a dotted filename uses the last extension", fileExtension("bank.statement.2026.pdf"), "pdf");
 // The point of the allow-list: nothing that executes.
 check("an executable is refused", checkUpload({ name: "invoice.exe", size: 1000 }).ok, false);
@@ -90,7 +90,7 @@ check("a trailing dot is not an extension", fileExtension("document."), "");
 check("a dotfile has no extension", fileExtension(".gitignore"), "");
 check("an empty file is refused", checkUpload({ name: "empty.pdf", size: 0 }).ok, false);
 check("an oversized file is refused", checkUpload({ name: "huge.pdf", size: MAX_UPLOAD_BYTES + 1 }).ok, false);
-check("a file exactly at the cap is accepted", checkUpload({ name: "big.pdf", size: MAX_UPLOAD_BYTES }), { ok: true });
+check("a file exactly at the cap is accepted", checkUpload({ name: "big.pdf", size: MAX_UPLOAD_BYTES }).ok, true);
 // The refusal has to tell a client what to do next, not name an internal.
 check("the size refusal says what to do", checkUpload({ name: "huge.pdf", size: MAX_UPLOAD_BYTES + 1 }), {
   ok: false,

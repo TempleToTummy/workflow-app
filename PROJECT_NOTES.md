@@ -216,8 +216,8 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   an inline ContactManager card on the client detail page
   (src/components/contact-manager.tsx) with add / edit / remove. Actions in
   src/lib/actions.ts under "Client contacts". A contact needs at least a
-  name, email, or mobile. ssnEncrypted is still deliberately not exposed
-  anywhere (see below).
+  name, email, or mobile. The SSN is now a write-only, encrypted field on the
+  ContactManager card with an audited Reveal (see SECURITY.md).
 - Completed periods are first-class now (FinancialCents "project per
   period" model), with NO schema change — rollover already left the old
   period's ClientActivity rows in place, the UI just never showed them:
@@ -783,10 +783,22 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
     - Anything that weakens an account (2FA off, new recovery codes, password
       change) re-asks for the password. Revoking access clears 2FA too.
 
+## Encryption at rest (SECURITY.md has the full design)
+- Files, Client tax IDs, CorpContact SSNs and backup files are encrypted by the
+  app with AES-256-GCM before they're stored. Files use envelope encryption
+  (per-file data key wrapped by DATA_ENCRYPTION_KEYS, wrapped key on the
+  Document row). src/lib/encryption.ts, document-vault.ts, sensitive-fields.ts,
+  file-safety.ts; tests in scripts/test-encryption.ts.
+- Client.taxId is now the Prisma field taxIdEncrypted (@map("taxId"), so the
+  column and its data survive `db push`), plus taxIdLast4 and a unique keyed
+  taxIdIndex. Tax IDs are searchable only as a full number or by last four.
+- Anything stored before this (plaintext files, tax IDs, SSNs, or a version 1
+  backup) is refused by the app until `npm run security:encrypt -- --apply`
+  encrypts it. Admin → Backup & Restore shows what's still pending.
+- On Supabase, supabase/security.sql is mandatory after every `db push` that
+  adds tables — it's what stops the public REST API reading the database.
+
 ## Known gaps / things to be careful about
-- CorpContact.ssnEncrypted is a placeholder field name only: real SSNs must
-  never go in there until actual encryption is implemented, so the contact
-  forms deliberately don't expose it.
 - The source app had a plaintext EMPLOYEES.EMPLOYEE_PASSWORD column. It
   was deliberately NOT carried over. Auth should be handled by Supabase
   Auth, not a hand-rolled password table.
@@ -845,9 +857,9 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   as deployment environment variables.
 - 2FA is recommended to admins, not enforced. Changing AUTH_SECRET after people
   enrol makes their secrets unreadable (they'd need an admin Reset 2FA).
-- Backups aren't encrypted and nothing schedules them — `npm run db:backup` is
-  built for cron. The format is versioned (BACKUP_VERSION); a future schema
-  change needs a migration step in restoreBackup for older files.
+- Backups are encrypted (DATA_ENCRYPTION_KEYS) but nothing schedules them —
+  `npm run db:backup` is built for cron. The format is versioned
+  (BACKUP_VERSION, now 2); upgradeRows() in backup-format.ts maps older files.
 - Search is `contains`-based. Fine for a firm-sized SQLite database; Postgres at
   scale would want a trigram or full-text index.
 - Bulk and search share the in-memory rate limiter's caveats (per process).
@@ -858,7 +870,7 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   safe (every write is a diff against existing rows) but would both log a run.
 
 ## Deployment target
-Currently runs on local SQLite for easy setup. To move to Supabase: change
-the datasource provider in prisma/schema.prisma from "sqlite" to
-"postgresql", and put the Supabase connection string in .env as
-DATABASE_URL.
+Currently runs on local SQLite for easy setup. To move to Supabase, follow
+"Going live on Supabase" in SECURITY.md: switch the datasource provider to
+"postgresql", set the database/storage/encryption environment variables,
+`prisma db push`, then run supabase/security.sql.

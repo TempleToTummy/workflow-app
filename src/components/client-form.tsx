@@ -15,7 +15,7 @@ import {
 
 type Lookup = { id: string; name: string };
 
-type ExistingClient = ClientFormInput & { id: string };
+type ExistingClient = ClientFormInput & { id: string; taxIdMasked?: string };
 
 export type ExistingContact = {
   id: string;
@@ -229,7 +229,9 @@ export function ClientForm({
       zipcode: String(form.get("zipcode") ?? ""),
       phone: String(form.get("phone") ?? ""),
       fax: String(form.get("fax") ?? ""),
+      // Write-only: blank keeps the stored value (see taxIdChanges).
       taxId: String(form.get("taxId") ?? ""),
+      clearTaxId: form.get("clearTaxId") === "on",
       email: String(form.get("email") ?? ""),
       note: String(form.get("note") ?? ""),
       coRegDate: String(form.get("coRegDate") ?? ""),
@@ -348,7 +350,22 @@ export function ClientForm({
             />
           </Field>
           <Field label="Tax ID (FIN)">
-            <input name="taxId" defaultValue={client?.taxId ?? ""} className={inputClass} />
+            {/* Never prefilled: the stored number is encrypted and isn't sent to
+                the browser. Typing a new one replaces it. */}
+            <input
+              name="taxId"
+              inputMode="numeric"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={client?.taxIdMasked ? `${client.taxIdMasked} — leave blank to keep` : "XX-XXXXXXX"}
+              className={inputClass}
+            />
+            {client?.taxIdMasked && (
+              <span className="mt-1 flex items-center gap-1.5 text-xs text-ink-muted">
+                <input type="checkbox" name="clearTaxId" /> Remove the stored tax ID
+              </span>
+            )}
+            <span className="text-xs text-ink-muted">Stored encrypted. Only the last four digits are shown.</span>
           </Field>
         </div>
       </div>

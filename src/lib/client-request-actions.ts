@@ -7,13 +7,15 @@ import { prisma } from "@/lib/prisma";
 import { requireEngagementAccess } from "@/lib/access";
 import { newToken, hashToken } from "@/lib/password";
 import { recordAudit, actorFrom, AUDIT } from "@/lib/audit";
-import { objectStore, documentStorageKey, DEFAULT_BUCKET } from "@/lib/storage";
+import { objectStore } from "@/lib/storage";
+import { storeDocumentBytes } from "@/lib/document-vault";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendSystemEmail } from "@/lib/system-email";
 import { firmName } from "@/lib/email";
 import { bestContactFor } from "@/lib/client-request-data";
 import {
   checkUpload,
+  checkContent,
   isActionable,
   requestExpiry,
   requestUrl,
@@ -332,10 +334,11 @@ export async function recordRequestView(token: string): Promise<void> {
 
 export type UploadResult = { filename: string; remaining: string | null };
 
-// The client sending us a document. Mirrors uploadDocument in actions.ts —
-// bytes to the ObjectStore first, then the row, so a failure can never leave a
-// Document pointing at nothing — with the allow-list and size cap from
-// src/lib/client-requests.ts applied on top.
+// The client sending us a document. Mirrors uploadDocument in actions.ts:
+// allow-listed type, bytes that match it (src/lib/file-safety.ts), encrypted
+// with its own key before it reaches storage (src/lib/document-vault.ts), and
+// the encrypted bytes written before the row so a failure can never leave a
+// Document pointing at nothing.
 export async function submitRequestUpload(formData: FormData): Promise<UploadResult> {
   const token = String(formData.get("token") ?? "");
   const request = await resolveActionable(token, "upload");
@@ -344,18 +347,30 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
   const file = formData.get("file");
   if (!(file instanceof File)) throw new Error("Choose a file to send.");
 
-  const verdict = checkUpload({ name: file.name, size: file.size });
-  if (!verdict.ok) throw new Error(verdict.reason);
+  const named = checkUpload({ name: file.name, size: file.size });
+  if (!named.ok) throw new Error(named.reason);
 
   const responderName = String(formData.get("name") ?? "").trim().slice(0, 120) || null;
   const note = String(formData.get("note") ?? "").trim().slice(0, 2000) || null;
 
-  const id = randomUUID();
-  const storageKey = documentStorageKey(request.clientId, request.projectId, id, file.name);
-  const mimeType = file.type || "application/octet-stream";
   const bytes = Buffer.from(await file.arrayBuffer());
+  const verdict = checkContent(named.filename, bytes);
+  if (!verdict.ok) {
+    await recordAudit({
+      entityType: "ClientRequest",
+      entityId: request.id,
+      action: AUDIT.DOCUMENT_REJECTED,
+      summary: `Refused a file named "${named.filename}" sent for "${request.title}": ${verdict.reason}`,
+      clientId: request.clientId,
+      projectId: request.projectId,
+      periodName: request.periodName,
+      actor: { id: null, label: "Client (via link)" },
+    });
+    throw new Error(verdict.reason);
+  }
 
-  await objectStore.put(DEFAULT_BUCKET, storageKey, bytes, mimeType);
+  const id = randomUUID();
+  const stored = await storeDocumentBytes({ documentId: id, clientId: request.clientId, bytes });
   try {
     await prisma.document.create({
       data: {
@@ -369,15 +384,14 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
         // "the client sent it" from "nobody recorded who did".
         uploadedById: null,
         clientRequestId: request.id,
-        filename: file.name,
-        mimeType,
-        size: file.size,
-        bucket: DEFAULT_BUCKET,
-        storageKey,
+        filename: verdict.filename,
+        mimeType: verdict.mimeType,
+        size: bytes.length,
+        ...stored,
       },
     });
   } catch (err) {
-    await objectStore.remove(DEFAULT_BUCKET, storageKey).catch(() => {});
+    await objectStore.remove(stored.bucket, stored.storageKey).catch(() => {});
     throw err;
   }
 
@@ -397,10 +411,10 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
     entityType: "ClientRequest",
     entityId: request.id,
     action: AUDIT.REQUEST_RESPONDED,
-    summary: `${request.client.companyName} sent "${file.name}" for ${
+    summary: `${request.client.companyName} sent "${verdict.filename}" for ${
       request.activity?.subTask.name ?? request.title
     }`,
-    toValue: file.name,
+    toValue: verdict.filename,
     clientId: request.clientId,
     projectId: request.projectId,
     periodName: request.periodName,
@@ -418,13 +432,13 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
         activityId: request.activityId,
         authorId: null,
         authorLabel: responderName ? `${responderName} (client)` : "Client",
-        body: `Sent **${file.name}** through the request link.${note ? `\n\n${note}` : ""}`,
+        body: `Sent **${verdict.filename}** through the request link.${note ? `\n\n${note}` : ""}`,
       },
     });
   }
 
   revalidateRequest(request.clientId, request.projectId);
-  return { filename: file.name, remaining: null };
+  return { filename: verdict.filename, remaining: null };
 }
 
 export async function submitRequestDecision(input: {

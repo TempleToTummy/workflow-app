@@ -96,8 +96,8 @@ export function BackupPanel({
           Download backup
         </a>
         <p className="mt-3 text-xs text-ink-muted">
-          The file contains client tax IDs, contacts and password hashes. Store it like you would the
-          database itself.
+          The file is encrypted with this server&apos;s keys, so it can only be restored on a server with
+          the same DATA_ENCRYPTION_KEYS. Keep a copy of those keys somewhere safe as well.
         </p>
       </div>
 

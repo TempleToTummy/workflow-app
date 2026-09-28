@@ -2,6 +2,7 @@ import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import type { ObjectStore } from "@/lib/storage";
+import { isSealedBlob, openBlob, sealBlob } from "@/lib/encryption";
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
@@ -9,6 +10,7 @@ import {
   EMPLOYEE_SECRET_COLUMNS,
   checkBackup,
   orderRowsForInsert,
+  upgradeRows,
   backupFilename,
   type BackupFile,
   type BackupTable,
@@ -37,6 +39,37 @@ function delegate(db: PrismaClient | Tx, table: BackupTable): Delegate {
 // deployment point BACKUP_DIR at storage that outlives the server.
 export function backupDir(): string {
   return process.env.BACKUP_DIR || path.join(process.cwd(), "backups");
+}
+
+const BLOB_PURPOSE = "backup";
+
+// What actually gets written to disk or downloaded: the backup JSON, encrypted
+// with the server's key ring, wrapped in a small JSON envelope. Restoring needs
+// a server holding the same DATA_ENCRYPTION_KEYS — which is the point.
+export function serializeBackup(backup: BackupFile): string {
+  return JSON.stringify(sealBlob(Buffer.from(JSON.stringify(backup), "utf8"), BLOB_PURPOSE));
+}
+
+// Reads either form: an encrypted backup (current) or a plain JSON one made
+// before backups were encrypted. Throws a sentence an admin can act on.
+export function parseBackupText(text: string): unknown {
+  let outer: unknown;
+  try {
+    outer = JSON.parse(text);
+  } catch {
+    throw new Error("That file isn't valid JSON — is it a backup?");
+  }
+  if (!isSealedBlob(outer)) return outer;
+  let inner: Buffer;
+  try {
+    inner = openBlob(outer, BLOB_PURPOSE);
+  } catch {
+    throw new Error(
+      `This backup is encrypted with key "${outer.keyId}", which this server can't use. ` +
+        "Restore it on a server that has the same DATA_ENCRYPTION_KEYS."
+    );
+  }
+  return JSON.parse(inner.toString("utf8"));
 }
 
 export async function createBackup(
@@ -105,7 +138,7 @@ export async function restoreBackup(
     const current = await createBackup(db, { createdBy: "automatic pre-restore snapshot" });
     await mkdir(backupDir(), { recursive: true });
     snapshot = path.join(backupDir(), `pre-restore-${backupFilename().replace(/^workflow-backup-/, "")}`);
-    await writeFile(snapshot, JSON.stringify(current));
+    await writeFile(snapshot, serializeBackup(current), { mode: 0o600 });
   }
 
   let currentTable: BackupTable | null = null;
@@ -122,7 +155,7 @@ export async function restoreBackup(
         }
         for (const table of BACKUP_TABLES) {
           currentTable = table;
-          const rows = orderRowsForInsert(table, backup.tables[table]);
+          const rows = orderRowsForInsert(table, upgradeRows(table, backup.tables[table], backup.version));
           // Chunked: SQLite caps the number of bound parameters per statement.
           for (let i = 0; i < rows.length; i += 200) {
             await delegate(tx, table).createMany({ data: rows.slice(i, i + 200) });
@@ -148,7 +181,7 @@ export async function restoreBackup(
   if (backup.files && options.store) {
     for (const f of backup.files) {
       const bytes = Buffer.from(f.base64, "base64");
-      await options.store.put(f.bucket, f.storageKey, bytes, "application/octet-stream");
+      await options.store.put(f.bucket, f.storageKey, bytes);
       filesWritten += 1;
     }
   }

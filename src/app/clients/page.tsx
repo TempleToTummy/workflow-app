@@ -5,6 +5,7 @@ import { FilterBar } from "@/components/filter-bar";
 import { ClientsTable } from "@/components/clients-table";
 import { clientGroupNames, visibleTags } from "@/lib/client-options";
 import { matchesClientFilters } from "@/lib/client-filters";
+import { taxIdSearch } from "@/lib/sensitive-fields";
 
 export default async function ClientsPage({
   searchParams,
@@ -20,6 +21,9 @@ export default async function ClientsPage({
   const showArchived = isAdmin && params.archived === "1";
   const groupBy = params.groupBy === "group";
   const query = (params.q ?? "").trim().toLowerCase();
+  // Tax IDs are encrypted, so they match only as a full number (via the keyed
+  // index) or by their last four digits — never as a substring.
+  const taxQuery = query ? taxIdSearch(query) : null;
 
   const [clients, archivedCount, activeCount, groups, tags] = await Promise.all([
     prisma.client.findMany({
@@ -47,9 +51,11 @@ export default async function ClientsPage({
     .filter(
       (c) =>
         !query ||
-        [c.companyName, c.groupName, c.email, c.phone, c.taxId]
+        [c.companyName, c.groupName, c.email, c.phone]
           .filter(Boolean)
-          .some((v) => v!.toLowerCase().includes(query))
+          .some((v) => v!.toLowerCase().includes(query)) ||
+        (taxQuery?.index !== undefined && c.taxIdIndex === taxQuery.index) ||
+        (taxQuery?.last4 !== undefined && c.taxIdLast4 === taxQuery.last4)
     )
     .map((c) => ({
       id: c.id,

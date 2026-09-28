@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { objectStore } from "@/lib/storage";
-import { createBackup, restoreBackup, snapshotPath } from "@/lib/backup";
+import { createBackup, restoreBackup, snapshotPath, serializeBackup, parseBackupText } from "@/lib/backup";
 import { checkBackup, backupFilename } from "@/lib/backup-format";
 import { recordAudit, actorFrom, AUDIT } from "@/lib/audit";
 
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   const includeFiles = url.searchParams.get("files") === "1";
   const label = `${auth.user.firstName} ${auth.user.lastName}`;
   const backup = await createBackup(prisma, { includeFiles, store: objectStore, createdBy: label });
-  const body = JSON.stringify(backup);
+  const body = serializeBackup(backup);
 
   // Downloading a backup is taking a copy of every client's data, so it
   // leaves a trace like any other sensitive action.
@@ -93,9 +93,10 @@ export async function POST(request: Request) {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await file.text());
-  } catch {
-    return Response.json({ ok: false, error: "That file isn't valid JSON — is it a backup?" }, { status: 400 });
+    parsed = parseBackupText(await file.text());
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "That file isn't valid JSON — is it a backup?";
+    return Response.json({ ok: false, error }, { status: 400 });
   }
   const check = checkBackup(parsed);
   if (!check.ok) return Response.json({ ok: false, error: check.error }, { status: 400 });

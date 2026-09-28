@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { ReportHeader } from "@/components/report-header";
+import { maskTaxId } from "@/lib/sensitive-fields";
 
 export default async function ClientInformationListPage() {
   const clients = await prisma.client.findMany({
@@ -45,7 +46,7 @@ export default async function ClientInformationListPage() {
                 <td className="px-4 py-3 text-ink-muted">{c.groupName ?? "—"}</td>
                 <td className="px-4 py-3 text-ink-muted">{c.corpType?.name ?? "—"}</td>
                 <td className="px-4 py-3 text-ink-muted">{c.businessType?.name ?? "—"}</td>
-                <td className="px-4 py-3 text-ink-muted">{c.taxId ?? "—"}</td>
+                <td className="px-4 py-3 font-mono text-ink-muted">{maskTaxId(c.taxIdLast4) ?? "—"}</td>
                 <td className="px-4 py-3 text-ink-muted">{c.phone ?? "—"}</td>
                 <td className="px-4 py-3 text-ink-muted">{c.email ?? "—"}</td>
                 <td className="px-4 py-3 text-ink-muted">

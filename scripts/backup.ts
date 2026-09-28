@@ -9,7 +9,7 @@
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
-import { createBackup, backupDir } from "../src/lib/backup";
+import { createBackup, backupDir, serializeBackup } from "../src/lib/backup";
 import { backupFilename } from "../src/lib/backup-format";
 import { objectStore } from "../src/lib/storage";
 
@@ -28,7 +28,8 @@ async function main() {
     const backup = await createBackup(prisma, { includeFiles, store: objectStore, createdBy: "npm run db:backup" });
     const out = outIdx >= 0 ? path.resolve(args[outIdx + 1]) : path.join(backupDir(), backupFilename());
     await mkdir(path.dirname(out), { recursive: true });
-    await writeFile(out, JSON.stringify(backup));
+    // Encrypted with DATA_ENCRYPTION_KEYS; owner-only permissions on disk.
+    await writeFile(out, serializeBackup(backup), { mode: 0o600 });
     const rows = Object.values(backup.tables).reduce((n, t) => n + t.length, 0);
     console.log(`Backed up ${rows} rows${includeFiles ? ` and ${backup.files?.length ?? 0} files` : ""} → ${out}`);
 

@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteDocument, uploadDocument } from "@/lib/actions";
 import { formatBytes, formatDate } from "@/lib/dates";
+import { UPLOAD_ACCEPT } from "@/lib/file-safety";
 
 export type FileRow = {
   id: string;
@@ -66,7 +67,8 @@ export function AssignmentFiles({
         Files
       </h2>
       <p className="mt-1 text-sm text-ink-muted">
-        Documents for this client and project.
+        Documents for this client and project. Every file is encrypted before
+        it&apos;s stored, and every download is logged.
       </p>
 
       <form
@@ -77,6 +79,7 @@ export function AssignmentFiles({
         <input
           type="file"
           name="file"
+          accept={UPLOAD_ACCEPT}
           required
           disabled={isPending}
           className="min-w-0 flex-1 text-sm text-ink file:mr-3 file:rounded-full file:border file:border-line file:bg-surface file:px-3 file:py-1 file:text-xs file:font-medium file:text-ink hover:file:bg-black/5"

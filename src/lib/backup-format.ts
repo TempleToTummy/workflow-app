@@ -9,9 +9,19 @@
 //
 // JSON rather than a copy of the SQLite file, because it has to survive the
 // planned move to Postgres: the same file restores into either database.
+//
+// On disk that JSON is itself ENCRYPTED (src/lib/backup.ts → sealBlob in
+// src/lib/encryption.ts), so a backup left in a downloads folder or on a NAS
+// is ciphertext. Inside it, uploaded files and tax IDs / SSNs are
+// additionally still in their own encrypted form.
+//
+// Version 2: Client.taxId became taxIdEncrypted (+ taxIdLast4, taxIdIndex) and
+// Document gained its encryption columns. upgradeRows() maps a version 1 file
+// forward; its plaintext tax IDs and unencrypted files are then picked up by
+// `npm run security:encrypt -- --apply` like any other legacy data.
 
 export const BACKUP_FORMAT = "workflow-backup";
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
 // Every table that is backed up, in an order where each table's foreign keys
 // point only at tables earlier in the list. Restore inserts in this order and
@@ -145,6 +155,19 @@ export function checkBackup(input: unknown): BackupCheck {
     createdAt: typeof b.createdAt === "string" ? b.createdAt : "unknown",
     createdBy: typeof b.createdBy === "string" ? b.createdBy : null,
   };
+}
+
+// Maps rows from an older backup version onto the current columns.
+export function upgradeRows(
+  table: BackupTable,
+  rows: Record<string, unknown>[],
+  version: number
+): Record<string, unknown>[] {
+  if (version >= 2) return rows;
+  if (table === "Client") {
+    return rows.map(({ taxId, ...rest }) => ({ ...rest, taxIdEncrypted: taxId ?? null }));
+  }
+  return rows;
 }
 
 // Rows in an order that satisfies self-references. TaskComment is the only

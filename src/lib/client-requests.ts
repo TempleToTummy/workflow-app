@@ -22,66 +22,18 @@ export function requestExpiry(from: Date = new Date()): Date {
   return new Date(from.getTime() + REQUEST_TTL_MS);
 }
 
-// What the client is allowed to send us. A tokenized page is reachable by
-// anybody holding the link, so the upload path is deliberately narrow: the
-// document formats an accounting firm actually receives, and nothing that
-// executes. The check is on the extension AND the browser-reported MIME type,
-// and an unknown-but-harmless type is refused rather than waved through.
-export const ALLOWED_UPLOAD_EXTENSIONS = [
-  "pdf",
-  "png",
-  "jpg",
-  "jpeg",
-  "webp",
-  "heic",
-  "csv",
-  "txt",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-  "ods",
-  "odt",
-  "zip",
-] as const;
-
-// 15 MB, matching the serverActions.bodySizeLimit in next.config.ts. A cap
-// above that limit would fail confusingly inside the framework instead of
-// giving the client a sentence they can act on.
-export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
-
-export function fileExtension(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  if (dot <= 0 || dot === filename.length - 1) return "";
-  return filename.slice(dot + 1).toLowerCase();
-}
-
-export type UploadCheck = { ok: true } | { ok: false; reason: string };
-
-// Messages here are written for a client, not for staff: they say what to do
-// next, and they never mention internals.
-export function checkUpload(file: { name: string; size: number }): UploadCheck {
-  if (file.size <= 0) {
-    return { ok: false, reason: "That file appears to be empty. Please choose another." };
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return {
-      ok: false,
-      reason: `Files need to be under ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB. Please send larger files in separate parts.`,
-    };
-  }
-  const ext = fileExtension(file.name);
-  if (!ext) {
-    return { ok: false, reason: "That file has no extension, so we can't tell what it is." };
-  }
-  if (!(ALLOWED_UPLOAD_EXTENSIONS as readonly string[]).includes(ext)) {
-    return {
-      ok: false,
-      reason: `We can't accept .${ext} files. Documents, spreadsheets, images and PDFs are fine.`,
-    };
-  }
-  return { ok: true };
-}
+// What the client is allowed to send us — and what staff may upload — lives in
+// src/lib/file-safety.ts, which checks the bytes as well as the name. It's
+// re-exported here because the request page and its tests import it from here.
+export {
+  ALLOWED_UPLOAD_EXTENSIONS,
+  MAX_UPLOAD_BYTES,
+  UPLOAD_ACCEPT,
+  fileExtension,
+  checkUpload,
+  checkContent,
+  type UploadCheck,
+} from "@/lib/file-safety";
 
 // --- The access decision -----------------------------------------------------
 

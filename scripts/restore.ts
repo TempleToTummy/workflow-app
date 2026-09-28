@@ -7,7 +7,7 @@
 // whole restore runs in one transaction, and everyone is signed out.
 import { readFile } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
-import { restoreBackup } from "../src/lib/backup";
+import { restoreBackup, parseBackupText } from "../src/lib/backup";
 import { checkBackup, SUMMARY_TABLES } from "../src/lib/backup-format";
 import { objectStore } from "../src/lib/storage";
 
@@ -16,7 +16,7 @@ async function main() {
   const file = args.find((a) => !a.startsWith("--"));
   if (!file) throw new Error("Usage: npm run db:restore -- <backup.json> [--yes]");
 
-  const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+  const parsed: unknown = parseBackupText(await readFile(file, "utf8"));
   const check = checkBackup(parsed);
   if (!check.ok) throw new Error(check.error);
 

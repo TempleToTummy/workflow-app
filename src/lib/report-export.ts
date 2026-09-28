@@ -5,6 +5,7 @@ import { resolveRange, toDecimalHours, realizationPercent, isTimeRange } from "@
 import { summarizeWorkload, computeLoad, LOAD_LABELS } from "@/lib/workload";
 import { describeRequest } from "@/lib/client-requests";
 import type { CsvRow } from "@/lib/csv";
+import { maskTaxId } from "@/lib/sensitive-fields";
 
 // The data behind every CSV export, one builder per report.
 //
@@ -436,16 +437,16 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
         orderBy: { companyName: "asc" },
       });
 
-      // ssnEncrypted is deliberately absent, as it is from every form in the
-      // app: the column has no encryption behind it yet, and an export is the
-      // last place a field like that should first appear.
+      // Tax IDs are exported MASKED (last four only) and SSNs not at all. A
+      // CSV is the file most likely to end up in an email or a shared drive,
+      // so it never carries a full taxpayer number.
       return {
         headers: [
           "Client",
           "Group",
           "Corp type",
           "Business type",
-          "Tax ID",
+          "Tax ID (last 4)",
           "Phone",
           "Fax",
           "Email",
@@ -464,7 +465,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
           c.groupName,
           c.corpType?.name ?? "",
           c.businessType?.name ?? "",
-          c.taxId,
+          maskTaxId(c.taxIdLast4),
           c.phone,
           c.fax,
           c.email,

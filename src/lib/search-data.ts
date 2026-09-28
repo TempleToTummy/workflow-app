@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { CurrentUser } from "@/lib/auth";
 import { messageScope } from "@/lib/email-data";
 import { excerpt, type SearchGroupKey } from "@/lib/search";
+import { maskTaxId, taxIdSearch } from "@/lib/sensitive-fields";
 
 // Global search: one query across clients, contacts, services, tasks,
 // comments, notes, files and email. Not a "use server" module — these are
@@ -66,6 +67,15 @@ export async function globalSearch(
   const clientVisibility = isAdmin ? {} : { archivedAt: null };
   const viaClient = isAdmin ? {} : { client: { archivedAt: null } };
 
+  // Tax IDs are encrypted: they match as a whole number through the keyed
+  // blind index, or by last four digits — never as a substring.
+  const taxQuery = taxIdSearch(q);
+  const taxMatch = taxQuery?.index
+    ? [{ taxIdIndex: taxQuery.index }]
+    : taxQuery?.last4
+    ? [{ taxIdLast4: taxQuery.last4 }]
+    : [];
+
   const clientWhere = {
     ...clientScope,
     ...clientVisibility,
@@ -74,7 +84,7 @@ export async function globalSearch(
       { groupName: like(q) },
       { email: like(q) },
       { phone: like(q) },
-      { taxId: like(q) },
+      ...taxMatch,
       { city: like(q) },
       { note: like(q) },
       { tags: { some: { tag: { name: like(q) } } } },
@@ -184,7 +194,12 @@ export async function globalSearch(
       total: clientTotal,
       hits: clients.map((c) => {
         const matchedTag = c.tags.find((t) => t.tag.name.toLowerCase().includes(q.toLowerCase()));
-        const field = firstMatch(q, c.groupName, c.email, c.phone, c.taxId, c.city, c.note);
+        const field =
+          firstMatch(q, c.groupName, c.email, c.phone, c.city, c.note) ??
+          (taxMatch.length > 0 &&
+          (c.taxIdIndex === taxQuery?.index || c.taxIdLast4 === taxQuery?.last4)
+            ? `Tax ID ${maskTaxId(c.taxIdLast4)}`
+            : null);
         return {
           id: c.id,
           title: c.companyName,

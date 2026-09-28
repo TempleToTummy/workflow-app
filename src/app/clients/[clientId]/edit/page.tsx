@@ -5,6 +5,7 @@ import { ClientForm } from "@/components/client-form";
 import { requireUser } from "@/lib/auth";
 import { canAccessClient } from "@/lib/access";
 import { clientGroupNames } from "@/lib/client-options";
+import { maskTaxId } from "@/lib/sensitive-fields";
 
 export default async function EditClientPage({
   params,
@@ -57,8 +58,11 @@ export default async function EditClientPage({
 
       <ClientForm
         mode="edit"
+        // Field by field, never a spread of the row: the encrypted tax ID and
+        // its index stay on the server. The form gets the masked last four.
         client={{
-          ...client,
+          id: client.id,
+          companyName: client.companyName,
           coRegDate: client.coRegDate ? client.coRegDate.toISOString() : undefined,
           groupName: client.groupName ?? undefined,
           corpTypeId: client.corpTypeId ?? undefined,
@@ -70,13 +74,20 @@ export default async function EditClientPage({
           zipcode: client.zipcode ?? undefined,
           phone: client.phone ?? undefined,
           fax: client.fax ?? undefined,
-          taxId: client.taxId ?? undefined,
+          taxIdMasked: maskTaxId(client.taxIdLast4) ?? undefined,
           email: client.email ?? undefined,
           note: client.note ?? undefined,
           coRegState: client.coRegState ?? undefined,
           renewMonth: client.renewMonth ?? undefined,
         }}
-        contacts={client.contacts}
+        contacts={client.contacts.map((c) => ({
+          id: c.id,
+          firstName: c.firstName,
+          lastName: c.lastName,
+          mobile: c.mobile,
+          email: c.email,
+          note: c.note,
+        }))}
         corpTypes={corpTypes}
         businessTypes={businessTypes}
         services={services}

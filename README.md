@@ -542,28 +542,44 @@ Every report has **Export CSV** and **Print** in its top-right corner, as do
 - `src/app/assignments/[clientId]/[projectId]/page.tsx` — the checklist
   view for one client's project.
 
+## Security: files, tax IDs, SSNs
+
+Everything sensitive is encrypted by the app (AES-256-GCM, envelope
+encryption, keys only in the server environment) before it reaches the
+database, the storage bucket or a backup file. Uploads are checked by content,
+not just name; every file download and every "Reveal" of a full tax ID or SSN
+is audited. The full design, the threat model and the go-live checklist are in
+**[SECURITY.md](SECURITY.md)**.
+
 ## Moving to Supabase
 
-1. Create a Supabase project (supabase.com), grab the connection string
-   from Project Settings → Database.
+Follow the go-live checklist in [SECURITY.md](SECURITY.md#going-live-on-supabase).
+In short:
+
+1. Create a Supabase project. Grab the connection string (Connect → ORMs →
+   Prisma) with `?sslmode=require`, the project URL and the service-role key.
 2. In `prisma/schema.prisma`, change the datasource provider from
    `sqlite` to `postgresql`.
-3. Put the Supabase connection string in `.env` as `DATABASE_URL`.
-4. Run `npx prisma db push` again, this time it creates the tables in
-   Supabase's Postgres instead of the local SQLite file.
-5. Run `npx prisma db seed` again if you want the sample data there too, or
-   skip it and start entering real clients.
+3. Set `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `DATA_ENCRYPTION_KEYS` and `DATA_INDEX_KEY` in the server environment.
+4. Run `npx prisma db push` — this creates the tables in Supabase's Postgres.
+5. Run `supabase/security.sql` in the SQL editor. **Not optional**: without
+   it, Supabase's public REST API can read every table.
+6. If you're bringing data across, restore a backup, then run
+   `npm run security:encrypt -- --apply` to encrypt anything older.
 
 ## Tests
 
 ```bash
-npm test     # 550 assertions across twelve scripts, no framework, no database
+npm test     # 656 assertions across thirteen scripts, no framework, no database
 ```
 
 Among them: `test-core-rules.ts` covers the rules the app stands on —
 `canMarkDone`, `deriveAssignmentStatus`, `dueBucket` (including Sunday/Monday and
 year boundaries) and `nextPeriodName` / period ranges — plus the permission
-policy; `test-security.ts` checks TOTP against the RFC 6238 test vectors.
+policy; `test-security.ts` checks TOTP against the RFC 6238 test vectors;
+`test-encryption.ts` covers encryption, tamper detection, key rotation, upload
+content checks and tax ID / SSN handling.
 
 Every rule worth testing lives in a pure module with no `next/*` and no Prisma
 import, so `tsx script.ts` is a complete test runner. See `scripts/`.
@@ -574,8 +590,7 @@ import, so `tsx script.ts` is a complete test runner. See `scripts/`.
   required of anyone; a firm-wide "must enrol" policy would be a small addition
   on top of what's here.
 - **Scheduled backups inside the app.** `npm run db:backup` is built for cron, but
-  nothing runs it for you, and backups aren't encrypted — keep them on storage
-  you trust.
+  nothing runs it for you. (Backups are encrypted; keep the keys separately.)
 - **Postgres full-text search.** Search uses `contains` (SQLite `LIKE`), which is
   fine at firm scale; a large database would want a proper index.
 
@@ -587,14 +602,14 @@ import, so `tsx script.ts` is a complete test runner. See `scripts/`.
 - **Timesheet locking.** Entries can be corrected at any time, including for a
   period already invoiced. Every edit and delete is audited, but nothing
   freezes a timesheet — add a lock before this drives real billing.
-- **Virus scanning on client uploads.** Files from outside the firm are
-  allow-listed by type and size but not scanned.
+- **Virus scanning on uploads.** Files are allow-listed by type, checked by
+  content and encrypted, and always downloaded as attachments, but not scanned
+  for malware. See SECURITY.md → "Not covered yet".
 - A full client portal. The tokenized request link covers the two steps the
   firm actually waits on; it is deliberately not a login, an account, or a
   view of anything else.
 - Everything from the "not migrated yet" list in the schema file: tax
   extensions, billing.
-- Document uploads have a first pass now (Files tab on the assignment
-  page). Bytes are stored on local disk under `.storage/` via a swappable
-  `ObjectStore` (`src/lib/storage.ts`); swap in a Supabase Storage backed
-  implementation there when deploying. `.storage/` is disposable.
+- Files: stored encrypted in a private Supabase Storage bucket when
+  `SUPABASE_URL` is set, or under `.storage/` locally
+  (`src/lib/storage.ts`). See SECURITY.md.
