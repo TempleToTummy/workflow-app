@@ -257,6 +257,48 @@ npm run db:upgrade                # dry run: shows what will change
 npm run db:upgrade -- --apply     # renumbers checklists 1, 2, 3…; gives each project its own Completed Y/N
 ```
 
+On a host, `npm run start:deploy` does all of this before starting the server
+(see below).
+
+## Deploying on Render
+
+`render.yaml` describes the service. For a service created by hand, set these
+in its **Settings**:
+
+| Setting | Value |
+| --- | --- |
+| Build Command | `npm ci --include=dev && npx prisma generate && npm run build` |
+| Start Command | `npm run start:deploy` |
+| Health Check Path | `/login` |
+
+`start:deploy` runs `scripts/prepare-deploy.ts`, then `next start`. Each step is
+safe to repeat on every deploy:
+
+1. `prisma db push`. On SQLite, if the change needs `--accept-data-loss`, the
+   database file is copied to `<file>.before-<time>` first. On Postgres it
+   stops and asks a person instead.
+2. Seeds the database only when it's brand new and empty (no employees). Sign
+   in as `admin@workflow.test` / `admin1234` and change that password at once.
+3. `upgrade-data.ts --apply`.
+4. `encrypt-at-rest.ts --apply`, when the encryption keys are set.
+
+**Environment** (Settings → Environment):
+
+- **`DATA_ENCRYPTION_KEYS` and `DATA_INDEX_KEY`.** Required for uploads, tax
+  IDs and SSNs in production. Generate them as `.env.example` shows, and keep
+  a copy in the firm's password manager.
+- **`CRON_SECRET` and `APP_URL`.**
+- **`DATABASE_URL`.** Defaults to `file:./dev.db`.
+
+Render's filesystem is wiped on every deploy and restart. That means a SQLite
+database and locally stored files only last if you attach a persistent disk
+(paid plans) and point `DATABASE_URL` at it, e.g. `file:/var/data/workflow.db`.
+The other way to keep data is to move to Supabase (see below).
+
+`vercel.json`'s cron doesn't run on Render. Either add a Render Cron Job that
+POSTs to `/api/cron/generate-periods`, or rely on the dashboard's built-in
+catch-up.
+
 ## Due dates
 
 A due date is not "the last day of the accounting period" — sales tax for

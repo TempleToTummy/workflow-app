@@ -1,0 +1,37 @@
+# Render Blueprint for the workflow app. Render reads this when the service is
+# created from a Blueprint (Dashboard → New → Blueprint). For a service that
+# was created by hand, copy the build and start commands below into its
+# Settings instead — they're what matter.
+#
+# The start command runs scripts/prepare-deploy.ts before the server: it
+# brings the database schema up to date, seeds a brand-new empty database,
+# runs the data upgrades, and encrypts anything stored before encryption
+# existed. All of it is safe to repeat on every deploy.
+services:
+  - type: web
+    name: workflow-app
+    runtime: node
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    startCommand: npm run start:deploy
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Local SQLite file. Without a persistent disk it's wiped on every
+      # deploy and restart (and re-seeded). To keep data, add a disk (paid
+      # plans) and point this at it, e.g. file:/var/data/workflow.db — or use
+      # Supabase Postgres (see .env.example and SECURITY.md).
+      - key: DATABASE_URL
+        value: file:./dev.db
+      # Encryption keys for files, tax IDs and SSNs — required in production.
+      # Generate them yourself (see .env.example) and keep a copy in the firm's
+      # password manager: losing them loses the data. Entered in the dashboard,
+      # never committed.
+      - key: DATA_ENCRYPTION_KEYS
+        sync: false
+      - key: DATA_INDEX_KEY
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true
+      - key: APP_URL
+        sync: false
