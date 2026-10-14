@@ -9,6 +9,7 @@ import { BulkBar, BulkOutcome, bulkButtonClass, bulkSelectClass, useSelection } 
 import { bulkAssignEngagements, type BulkResult } from "@/lib/bulk-actions";
 import { describeBulkResult } from "@/lib/bulk";
 import { formatDueDate } from "@/lib/dates";
+import { formatPeriodName } from "@/lib/period-names";
 
 export type DashboardRow = {
   key: string;
@@ -177,7 +178,7 @@ export function DashboardTable({
                         {r.projectName}
                       </Link>
                       <span className="count-pill bg-black/5 text-[10px] text-ink-muted">
-                        {r.periodName}
+                        {formatPeriodName(r.periodName)}
                       </span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">

@@ -3,13 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { DeleteButton } from "@/components/delete-button";
 import { deleteProject } from "@/lib/actions";
 import { describeDueRule } from "@/lib/due-dates";
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Every Year",
-  ONE_TIME: "One time only",
-};
+import { RECURRING_LABELS } from "@/lib/period-names";
 
 export default async function ProjectsAdminPage() {
   const projects = await prisma.project.findMany({

@@ -4,6 +4,7 @@ import { currentPeriodName, periodRangeForName } from "@/lib/period-names";
 
 export {
   currentPeriodName,
+  firstPeriodName,
   nextPeriodName,
   periodRangeForName,
   isPeriodBefore,

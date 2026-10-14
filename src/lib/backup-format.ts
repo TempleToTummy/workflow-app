@@ -19,9 +19,19 @@
 // Document gained its encryption columns. upgradeRows() maps a version 1 file
 // forward; its plaintext tax IDs and unencrypted files are then picked up by
 // `npm run security:encrypt -- --apply` like any other legacy data.
+//
+// Version 3: the ClientNote table; Project gained recurrenceAnchor and ownerId,
+// ProjectClientMap gained recurrenceAnchor, ProjectSubTask gained systemKey —
+// all optional, so older rows restore as they are. After restoring an older
+// backup, run `npm run db:upgrade -- --apply` to fold its per-project
+// "Completed Y/N" steps into the universal one.
 
 export const BACKUP_FORMAT = "workflow-backup";
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
+
+// Tables added after version 1, and the version that introduced each. A backup
+// older than that simply doesn't have the table, which restores as empty.
+const ADDED_IN: Partial<Record<string, number>> = { ClientNote: 3 };
 
 // Every table that is backed up, in an order where each table's foreign keys
 // point only at tables earlier in the list. Restore inserts in this order and
@@ -42,6 +52,7 @@ export const BACKUP_TABLES = [
   "Tag",
   "ClientTag",
   "CorpContact",
+  "ClientNote",
   "Project",
   "ProjectSubTask",
   "ProjectTaskMap",
@@ -117,6 +128,10 @@ export function checkBackup(input: unknown): BackupCheck {
   const counts = {} as Record<BackupTable, number>;
   for (const table of BACKUP_TABLES) {
     const rows = (b.tables as Record<string, unknown>)[table];
+    if (rows === undefined && (ADDED_IN[table] ?? 1) > b.version) {
+      counts[table] = 0;
+      continue;
+    }
     if (rows === undefined) {
       return { ok: false, error: `The backup is missing the ${table} table.` };
     }

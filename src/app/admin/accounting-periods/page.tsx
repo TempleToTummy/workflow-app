@@ -2,13 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { AccountingPeriodForm } from "@/components/accounting-period-form";
 import { formatDueDate } from "@/lib/dates";
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Every Year",
-  ONE_TIME: "One time only",
-};
+import { RECURRING_LABELS } from "@/lib/period-names";
 
 export default async function AccountingPeriodsPage() {
   const periods = await prisma.accountingPeriod.findMany({

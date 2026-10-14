@@ -7,7 +7,9 @@ import { formatDueDate, dueDateUrgency } from "@/lib/dates";
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { ProjectChecklistBuilder } from "@/components/project-checklist-builder";
 import { ProjectDueRule } from "@/components/project-due-rule";
-import { describeDueRule, describeStepOffset } from "@/lib/due-dates";
+import { describeDueRule, describeRecurrenceVsDue, describeStepOffset } from "@/lib/due-dates";
+import { ProjectSchedule } from "@/components/schedule-editor";
+import { RECURRING_LABELS, describeSchedule, formatPeriodName, isoDate } from "@/lib/period-names";
 import { formatMinutes } from "@/lib/time";
 
 export default async function ProjectDetailPage({
@@ -66,6 +68,7 @@ export default async function ProjectDetailPage({
     dueOffsetDays: tm.dueOffsetDays,
     estimatedMinutes: tm.estimatedMinutes,
     defaultAssigneeId: tm.defaultAssigneeId,
+    universal: Boolean(tm.subTask.systemKey),
   }));
 
   const rows = assignments
@@ -111,19 +114,24 @@ export default async function ProjectDetailPage({
           <p className="mt-1 text-sm text-ink">{project.description}</p>
         )}
         <p className="mt-1 text-sm text-ink-muted">
-          {project.recurring.type.charAt(0) +
-            project.recurring.type.slice(1).toLowerCase().replace("_", " ")}{" "}
-          · {project.subtasks.length} checklist steps · {rows.length} active client
+          {RECURRING_LABELS[project.recurring.type]} · {project.subtasks.length} checklist steps · {rows.length} active client
           {rows.length === 1 ? "" : "s"}
         </p>
         <p className="mt-1 text-sm text-ink-muted">
-          {describeDueRule(project.dueOffsetDays, project.recurring.type)}
+          {describeSchedule(project.recurring.type, project.recurrenceAnchor)}{" "}
+          {describeDueRule(project.dueOffsetDays, project.recurring.type)}{" "}
+          {describeRecurrenceVsDue(project.dueOffsetDays, project.recurring.type)}
         </p>
       </div>
 
       {user.role === "ADMIN" ? (
         <>
-          <div className="mb-6">
+          <div className="mb-6 grid gap-4 lg:grid-cols-2">
+            <ProjectSchedule
+              projectId={projectId}
+              recurring={project.recurring.type}
+              anchor={project.recurrenceAnchor ? isoDate(project.recurrenceAnchor) : ""}
+            />
             <ProjectDueRule
               projectId={projectId}
               recurring={project.recurring.type}
@@ -213,7 +221,7 @@ export default async function ProjectDetailPage({
                     </Link>
                   </td>
                   <td className="tabular px-4 py-4 align-middle text-ink-muted">
-                    {r.period ?? "—"}
+                    {r.period ? formatPeriodName(r.period) : "—"}
                   </td>
                   <td className="px-4 py-4 align-middle">
                     <StatusBadge status={r.status} />

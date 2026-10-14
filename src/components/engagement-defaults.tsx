@@ -28,6 +28,7 @@ export function EngagementDefaults({
   defaultAssigneeId,
   unassignedCount,
   stepDefaultCount,
+  projectOwnerName = null,
 }: {
   clientId: string;
   projectId: string;
@@ -36,6 +37,9 @@ export function EngagementDefaults({
   defaultAssigneeId: string | null;
   unassignedCount: number;
   stepDefaultCount: number;
+  // Who handles this project for the firm (set on the employee's page). Used
+  // whenever this engagement has no owner of its own.
+  projectOwnerName?: string | null;
 }) {
   const router = useRouter();
   const [value, setValue] = useState(defaultAssigneeId ?? "");
@@ -54,6 +58,8 @@ export function EngagementDefaults({
         setMessage(
           next
             ? "Saved. New periods will be assigned automatically."
+            : projectOwnerName
+            ? `Cleared. New periods go to ${projectOwnerName}, who handles this project.`
             : "Cleared. New periods will arrive unassigned."
         );
         router.refresh();
@@ -83,7 +89,7 @@ export function EngagementDefaults({
     });
   }
 
-  const hasAnyDefault = Boolean(value) || stepDefaultCount > 0;
+  const hasAnyDefault = Boolean(value) || stepDefaultCount > 0 || Boolean(projectOwnerName);
 
   return (
     <div className="rounded-lg border border-line bg-surface p-4">
@@ -101,7 +107,9 @@ export function EngagementDefaults({
         aria-label="Default assignee for this engagement"
         className="mt-2 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
       >
-        <option value="">No default — leave unassigned</option>
+        <option value="">
+          {projectOwnerName ? `Project owner — ${projectOwnerName}` : "No default — leave unassigned"}
+        </option>
         {employees.map((e) => (
           <option key={e.id} value={e.id}>
             {e.name}

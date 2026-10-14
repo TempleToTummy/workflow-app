@@ -8,6 +8,15 @@ import { AssigneePanel } from "@/components/assignee-panel";
 import { AssignmentFiles } from "@/components/assignment-files";
 import { AssignmentNotes } from "@/components/assignment-notes";
 import { AssignmentDuePanel } from "@/components/assignment-due-panel";
+import { EngagementSchedule } from "@/components/schedule-editor";
+import {
+  effectiveAnchor,
+  formatPeriodName,
+  isoDate,
+  nextPeriodName,
+  parsePeriodName,
+} from "@/lib/period-names";
+import { StartNextPeriod } from "@/components/start-next-period";
 import { EngagementDefaults } from "@/components/engagement-defaults";
 import { EngagementHistory } from "@/components/engagement-history";
 import { ClientRequestPanel } from "@/components/client-request-panel";
@@ -62,7 +71,7 @@ export default async function AssignmentDetailPage({
 
   const assignment = await prisma.projectClientMap.findUnique({
     where: { clientId_projectId: { clientId, projectId } },
-    include: { client: true, project: { include: { recurring: true } } },
+    include: { client: true, project: { include: { recurring: true, owner: true } } },
   });
 
   if (!assignment) notFound();
@@ -159,15 +168,43 @@ export default async function AssignmentDetailPage({
   const history = [...knownPeriods]
     .map((name) => {
       const rows = historyRows.filter((r) => r.periodName === name);
+      const done = rows.length > 0 && rows.every((r) => r.status === "DONE");
       return {
         name,
-        done: rows.length > 0 && rows.every((r) => r.status === "DONE"),
+        done,
+        open: rows.some((r) => r.status !== "DONE"),
+        doneCount: rows.filter((r) => r.status === "DONE").length,
+        total: rows.length,
         start: periodByName.get(name)?.startDate.getTime() ?? 0,
       };
     })
     .sort((a, b) => b.start - a.start || b.name.localeCompare(a.name));
 
   const basePath = `/assignments/${clientId}/${projectId}`;
+
+  // Earlier periods that still have unfinished work: they run alongside the
+  // current one until they're done, and the page says so.
+  const otherOpen = history.filter((h) => h.open && h.name !== assignment.currentPeriod);
+
+  // "Start next period now": available once the current period has begun, so
+  // the engagement is never more than one period ahead of the calendar.
+  const type = assignment.project.recurring.type;
+  let startableNext: string | null = null;
+  if (isCurrent && assignment.active && type !== "ONE_TIME" && assignment.currentPeriod) {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (parsePeriodName(assignment.currentPeriod).start.getTime() <= today.getTime()) {
+        startableNext = nextPeriodName(
+          type,
+          assignment.currentPeriod,
+          effectiveAnchor(assignment.project.recurrenceAnchor, assignment.recurrenceAnchor)
+        );
+      }
+    } catch {
+      startableNext = null;
+    }
+  }
   const employeeOptions = employees.map((e) => ({ id: e.id, name: employeeName(e) }));
 
   const overallStatus = deriveAssignmentStatus(activities);
@@ -231,15 +268,25 @@ export default async function AssignmentDetailPage({
             {periodName && (
               <>
                 {" · "}
-                <span className="tabular">{periodName}</span>
+                <span className="tabular">{formatPeriodName(periodName)}</span>
                 {engagementDue && <> (due {formatDueDate(engagementDue)})</>}
               </>
             )}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="tabular text-sm text-ink-muted">{progress} done</span>
-          <StatusBadge status={overallStatus} />
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-3">
+            <span className="tabular text-sm text-ink-muted">{progress} done</span>
+            <StatusBadge status={overallStatus} />
+          </div>
+          {startableNext && (
+            <StartNextPeriod
+              clientId={clientId}
+              projectId={projectId}
+              nextPeriod={startableNext}
+              currentDone={completed}
+            />
+          )}
         </div>
       </div>
 
@@ -266,11 +313,42 @@ export default async function AssignmentDetailPage({
                     <path d="M4.5 10.5l3.5 3.5 7.5-8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 )}
-                {h.name}
+                {formatPeriodName(h.name)}
                 {current && <span className="font-sans not-italic opacity-70">· current</span>}
+                {!current && h.open && (
+                  <span className="font-sans not-italic text-[var(--status-review)]">· open</span>
+                )}
               </Link>
             );
           })}
+        </div>
+      )}
+
+      {isCurrent && otherOpen.length > 0 && (
+        <div className="mt-4 rounded-lg border border-[var(--status-review)]/40 bg-[var(--status-review)]/10 px-4 py-3 text-sm text-ink">
+          {otherOpen.length === 1 ? "An earlier period is" : `${otherOpen.length} earlier periods are`} still
+          open alongside this one:{" "}
+          {otherOpen.map((h, i) => (
+            <span key={h.name}>
+              {i > 0 && ", "}
+              <Link
+                href={`${basePath}?period=${encodeURIComponent(h.name)}`}
+                className="font-medium text-accent hover:underline"
+              >
+                {formatPeriodName(h.name)} ({h.doneCount}/{h.total} done)
+              </Link>
+            </span>
+          ))}
+          .
+        </div>
+      )}
+      {!isCurrent && !completed && periodName && assignment.currentPeriod && (
+        <div className="mt-4 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink-muted">
+          {formatPeriodName(periodName)} is still open and runs alongside the current period (
+          <Link href={basePath} className="font-medium text-accent hover:underline">
+            {formatPeriodName(assignment.currentPeriod)}
+          </Link>
+          ). Work it here as normal.
         </div>
       )}
 
@@ -283,11 +361,11 @@ export default async function AssignmentDetailPage({
             </svg>
             {isCurrent
               ? "This project is complete."
-              : `${periodName} is complete. You're viewing its history.`}
+              : `${formatPeriodName(periodName ?? "")} is complete. You're viewing its history.`}
           </span>
           {!isCurrent && assignment.currentPeriod && (
             <Link href={basePath} className="font-medium hover:underline">
-              Go to the current period ({assignment.currentPeriod}) →
+              Go to the current period ({formatPeriodName(assignment.currentPeriod)}) →
             </Link>
           )}
         </div>
@@ -414,7 +492,17 @@ export default async function AssignmentDetailPage({
             projectOffset={assignment.project.dueOffsetDays}
             clientOffset={assignment.dueOffsetDays}
             engagementDue={engagementDue ? formatDueDate(engagementDue) : null}
-            periodName={periodName}
+            periodName={periodName ? formatPeriodName(periodName) : null}
+          />
+          <EngagementSchedule
+            clientId={clientId}
+            projectId={projectId}
+            recurring={assignment.project.recurring.type}
+            projectAnchor={
+              assignment.project.recurrenceAnchor ? isoDate(assignment.project.recurrenceAnchor) : ""
+            }
+            clientAnchor={assignment.recurrenceAnchor ? isoDate(assignment.recurrenceAnchor) : ""}
+            currentPeriod={assignment.currentPeriod}
           />
           <ClientRequestPanel
             clientId={clientId}
@@ -459,6 +547,7 @@ export default async function AssignmentDetailPage({
             defaultAssigneeId={assignment.defaultAssigneeId}
             unassignedCount={steps.filter((s) => !s.assigneeId).length}
             stepDefaultCount={stepDefaultCount}
+            projectOwnerName={assignment.project.owner ? employeeName(assignment.project.owner) : null}
           />
           <AssigneePanel
             clientId={clientId}

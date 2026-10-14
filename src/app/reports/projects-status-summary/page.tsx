@@ -1,13 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { ReportHeader } from "@/components/report-header";
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Every Year",
-  ONE_TIME: "One time only",
-};
+import { RECURRING_LABELS } from "@/lib/period-names";
 
 export default async function ProjectsStatusSummaryPage() {
   const [projects, assignments, activities] = await Promise.all([

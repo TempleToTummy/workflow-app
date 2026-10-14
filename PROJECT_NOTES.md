@@ -783,6 +783,26 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
     - Anything that weakens an account (2FA off, new recovery codes, password
       change) re-asks for the password. Revoking access clears 2FA too.
 
+## Workflow changes (Oct 2026)
+- Recurrence: WEEKLY, BIWEEKLY, SEMI_MONTHLY, SEMI_ANNUAL added. Periods are
+  aligned to a start date ("anchor") — Project.recurrenceAnchor, overridable
+  per client on ProjectClientMap.recurrenceAnchor. All schedule math is in
+  src/lib/period-names.ts; period names are self-describing (legacy calendar
+  names unchanged, everything else "YYYY-MM-DD..YYYY-MM-DD"). The next period
+  starts the day after the current one ends, never from the due date.
+- Checklists: numbered 1..n; insert-at-position; one universal "Completed Y/N"
+  ProjectSubTask (systemKey COMPLETED) that every project with steps ends
+  with. All edits go through normalizeChecklist (src/lib/checklist.ts), which
+  also renumbers periods in progress and adds an inserted step to them when
+  their work isn't past it. `npm run db:upgrade -- --apply` migrates old data.
+- Project.ownerId ("Projects they handle" on the employee edit page) is a
+  third default-assignee layer below step and engagement defaults.
+- ClientNote: client-level notes on the client page, searchable, backed up
+  (BACKUP_VERSION 3).
+- Two periods at once: periodsInPlay (src/lib/workflow.ts) keeps unfinished
+  earlier periods on the Tasks list; startNextPeriod opens the next period up
+  to one period ahead of the calendar.
+
 ## Encryption at rest (SECURITY.md has the full design)
 - Files, Client tax IDs, CorpContact SSNs and backup files are encrypted by the
   app with AES-256-GCM before they're stored. Files use envelope encryption

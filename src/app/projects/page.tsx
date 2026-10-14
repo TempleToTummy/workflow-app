@@ -2,13 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { describeDueRule } from "@/lib/due-dates";
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Annual",
-  ONE_TIME: "One time",
-};
+import { RECURRING_SHORT_LABELS as RECURRING_LABELS } from "@/lib/period-names";
 
 export default async function ProjectsPage() {
   const user = await requireUser();
@@ -17,7 +11,7 @@ export default async function ProjectsPage() {
     prisma.project.findMany({
       // Employees see only projects they have a task on.
       where: mine ? { activities: { some: { assigneeId: mine } } } : undefined,
-      include: { recurring: true, subtasks: true },
+      include: { recurring: true, subtasks: true, owner: { select: { firstName: true, lastName: true } } },
       orderBy: { name: "asc" },
     }),
     prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
@@ -42,6 +36,7 @@ export default async function ProjectsPage() {
         id: p.id,
         name: p.name,
         description: p.description,
+        owner: p.owner ? `${p.owner.firstName} ${p.owner.lastName}` : null,
         cadence: RECURRING_LABELS[p.recurring.type] ?? p.recurring.type,
         dueRule: describeDueRule(p.dueOffsetDays, p.recurring.type),
         steps: p.subtasks.length,
@@ -100,6 +95,9 @@ export default async function ProjectsPage() {
                   {r.description && (
                     <p className="text-xs text-ink-muted">{r.description}</p>
                   )}
+                  <p className="text-xs text-ink-muted">
+                    {r.owner ? `Handled by ${r.owner}` : "No default owner"}
+                  </p>
                 </td>
                 <td className="whitespace-nowrap px-4 py-4 align-middle text-ink-muted">{r.cadence}</td>
                 <td className="px-4 py-4 align-middle text-xs text-ink-muted">

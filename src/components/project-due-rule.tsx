@@ -6,6 +6,7 @@ import type { RecurringType } from "@prisma/client";
 import { setProjectDueRule } from "@/lib/actions";
 import {
   describeDueRule,
+  describeRecurrenceVsDue,
   clampOffset,
   MIN_OFFSET_DAYS,
   MAX_OFFSET_DAYS,
@@ -24,11 +25,19 @@ import {
 // Common filing deadlines, as offsets from a period end. Typing "20" is fine;
 // these just save the arithmetic for the usual cases.
 const PRESETS: { label: string; days: number; cadence: RecurringType[] }[] = [
-  { label: "Last day of period", days: 0, cadence: ["MONTHLY", "QUARTERLY", "ANNUAL", "ONE_TIME"] },
+  {
+    label: "Last day of period",
+    days: 0,
+    cadence: ["WEEKLY", "BIWEEKLY", "SEMI_MONTHLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL", "ONE_TIME"],
+  },
+  { label: "2 days after", days: 2, cadence: ["WEEKLY", "BIWEEKLY"] },
+  { label: "1 week after", days: 7, cadence: ["WEEKLY", "BIWEEKLY", "SEMI_MONTHLY"] },
+  { label: "10 days after", days: 10, cadence: ["SEMI_MONTHLY"] },
   { label: "10th of next month", days: 10, cadence: ["MONTHLY"] },
   { label: "15th of next month", days: 15, cadence: ["MONTHLY"] },
   { label: "20th of next month", days: 20, cadence: ["MONTHLY"] },
-  { label: "End of next month", days: 31, cadence: ["MONTHLY", "QUARTERLY"] },
+  { label: "End of next month", days: 31, cadence: ["MONTHLY", "QUARTERLY", "SEMI_ANNUAL"] },
+  { label: "45 days after", days: 45, cadence: ["QUARTERLY", "SEMI_ANNUAL"] },
   { label: "Jan 31", days: 31, cadence: ["ANNUAL"] },
   { label: "Mar 15", days: 74, cadence: ["ANNUAL"] },
   { label: "Apr 15", days: 105, cadence: ["ANNUAL"] },
@@ -118,6 +127,9 @@ export function ProjectDueRule({
         <p className="mb-1.5 flex-1 text-sm text-ink-muted">
           {describeDueRule(preview, recurring)}
           {dirty && <span className="ml-1 text-[var(--status-review)]">(unsaved)</span>}
+          {describeRecurrenceVsDue(preview, recurring) && (
+            <span className="mt-0.5 block text-xs">{describeRecurrenceVsDue(preview, recurring)}</span>
+          )}
         </p>
 
         <button

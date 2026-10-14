@@ -1,6 +1,15 @@
 import { PrismaClient, RecurringType, ActivityStatus } from "@prisma/client";
 import { hashPassword, newToken, inviteExpiry } from "../src/lib/password";
 import { BUILT_IN_TEMPLATES } from "./email-templates";
+import { COMPLETED_KEY, COMPLETED_NAME, isCompletedStepName } from "../src/lib/checklist-rules";
+
+let completedStep: { id: string; name: string } | null = null;
+async function universalCompleted() {
+  completedStep ??= await prisma.projectSubTask.create({
+    data: { name: COMPLETED_NAME, systemKey: COMPLETED_KEY },
+  });
+  return completedStep;
+}
 
 const prisma = new PrismaClient();
 
@@ -325,13 +334,20 @@ async function main() {
     });
     projectsByName[def.name] = project;
 
+    // Steps are numbered 1, 2, 3… and every project with steps ends with the
+    // ONE shared "Completed Y/N" step (src/lib/checklist-rules.ts), rather
+    // than each project carrying its own copy as the source app did.
     const subtasks = [];
-    for (const step of def.steps) {
+    const ordered = [...def.steps].sort((a, b) => a.seq - b.seq).filter((st) => !isCompletedStepName(st.name));
+    for (const step of ordered) {
       const subtask = await prisma.projectSubTask.create({ data: { name: step.name } });
-      await prisma.projectTaskMap.create({
-        data: { projectId: project.id, subTaskId: subtask.id, sequence: step.seq },
-      });
       subtasks.push(subtask);
+    }
+    if (subtasks.length > 0) subtasks.push(await universalCompleted());
+    for (const [i, subtask] of subtasks.entries()) {
+      await prisma.projectTaskMap.create({
+        data: { projectId: project.id, subTaskId: subtask.id, sequence: i + 1 },
+      });
     }
     subtasksByProject[def.name] = subtasks;
   }

@@ -6,6 +6,7 @@ import { summarizeWorkload, computeLoad, LOAD_LABELS } from "@/lib/workload";
 import { describeRequest } from "@/lib/client-requests";
 import type { CsvRow } from "@/lib/csv";
 import { maskTaxId } from "@/lib/sensitive-fields";
+import { RECURRING_LABELS } from "@/lib/period-names";
 
 // The data behind every CSV export, one builder per report.
 //
@@ -29,13 +30,6 @@ import { maskTaxId } from "@/lib/sensitive-fields";
 // with merged headers, because a spreadsheet's whole advantage is that it can
 // pivot, filter and sum a flat table — and a grid pasted into Excel cannot be
 // any of those things.
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Every Year",
-  ONE_TIME: "One time only",
-};
 
 export type ExportTable = { headers: string[]; rows: CsvRow[] };
 

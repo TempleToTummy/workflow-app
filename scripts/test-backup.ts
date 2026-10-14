@@ -49,6 +49,9 @@ section("table order");
     ["ClientTag", "Client"],
     ["SavedView", "Employee"],
     ["CorpContact", "Client"],
+    ["ClientNote", "Client"],
+    ["ClientNote", "Employee"],
+    ["Project", "Employee"],
   ];
   for (const [child, parent] of fks) {
     check(`${parent} before ${child}`, idx(parent) >= 0 && idx(parent) < idx(child), true);
@@ -58,6 +61,17 @@ section("table order");
 }
 
 section("checkBackup — accepts");
+{
+  // A backup from before client notes existed has no ClientNote table; it
+  // restores with none. A current backup missing it is still refused.
+  const older = validBackup();
+  older.version = 2;
+  delete (older.tables as Record<string, unknown>).ClientNote;
+  check("an older backup without ClientNote is accepted", err(older), "ok");
+  const current = validBackup();
+  delete (current.tables as Record<string, unknown>).ClientNote;
+  check("a current backup without ClientNote is refused", err(current), "The backup is missing the ClientNote table.");
+}
 {
   const r = checkBackup(validBackup());
   check("a well-formed backup", r.ok, true);

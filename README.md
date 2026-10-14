@@ -167,6 +167,74 @@ Set `AUTH_SECRET` in the server environment to encrypt 2FA secrets at rest
 (AES-256-GCM). Without it they're stored unencrypted and the Account page says
 so. Don't change `AUTH_SECRET` after people have enrolled.
 
+## Recurrence and start dates
+
+A project repeats **weekly**, **every 2 weeks**, **twice a month** (1st–15th,
+16th–end), **monthly**, **quarterly**, **every 6 months**, **yearly**, or runs
+**once**. Pick it when creating the project; the form previews the next few
+periods.
+
+**Start date** ("recurs starting on") lines the periods up: a weekly project
+from a Wednesday runs Wed–Tue, a biweekly one follows a client's pay cycle, a
+monthly one from the 15th runs 15th–14th, a yearly one from Jul 1 follows a
+Jul–Jun fiscal year. Blank = the calendar default (Mondays, the 1st, Jan 1).
+Set the default on the project page (**Schedule**), and override it for one
+client in the **Schedule** panel on their engagement page. Month-based start
+dates must be the 1st–28th so every month has the day.
+
+**The due date never moves the schedule.** The next period starts the day after
+the current one *ends*. A monthly project due 15 days after month end still
+opens November on Nov 1, while October's work stays due Nov 15 — so the two
+overlap, which is normal. Changing a start date is not retroactive: open
+periods keep their dates, and if the new date doesn't line up the next period
+is shortened once (e.g. Nov 1–14) so nothing is skipped or done twice.
+
+Period names describe their dates: `2026-08`, `2026-Q3`, `2026-H1`, `2026`
+for calendar periods (unchanged from before), and `2026-10-12..2026-10-25` for
+everything else, shown on screen as "Oct 12 – 25, 2026". The rules live in
+`src/lib/period-names.ts`; tests in `scripts/test-recurrence.ts`.
+
+## Two periods at once
+
+A new period opens on schedule whether or not the last one is finished, and
+**Start … now** on the engagement page opens the next period early (at most one
+period ahead of the calendar). Every unfinished period stays in play: it has
+its own row on the dashboard, its tasks stay on the Tasks list (marked "still
+open"), and the engagement page flags it with a banner and an "open" chip. Each
+period keeps its own checklist, files, time and due date, and finish-in-order
+applies within a period, never across them.
+
+## Checklists
+
+Steps are numbered 1, 2, 3… On the project page, hover between two steps and
+click **+ Insert step N**: the new step becomes number N and the steps after it
+move down one (the Projects Task Map admin page takes a step number too). A
+step added mid-checklist is also added to client periods already in progress,
+unless their work is already past that point. Drag the handle to reorder.
+
+Every project with steps ends with the one shared **Completed Y/N** step. It is
+a single step used by all projects (not a copy per project), always last, and
+can't be removed or moved; rename it once on Admin → Projects Task. The logic
+is in `src/lib/checklist.ts` / `checklist-rules.ts`.
+
+## Client notes
+
+The client page has **Client notes**: a running log about the client as a whole
+("prefers phone calls", "selling the business in March"), separate from each
+engagement's notes. Newest first; only the author or an admin can edit or
+delete one. They're included in search and in backups.
+
+## Upgrading an existing database
+
+After pulling a release that changes the schema:
+
+```bash
+npm run db:backup                 # always first
+npx prisma db push                # may ask for --accept-data-loss for new unique columns; they're empty
+npm run db:upgrade                # dry run: shows what will change
+npm run db:upgrade -- --apply     # merges old "Completed Y/N" copies, renumbers checklists 1, 2, 3…
+```
+
 ## Due dates
 
 A due date is not "the last day of the accounting period" — sales tax for
@@ -365,15 +433,22 @@ visible to anyone who can already open that engagement.
 ## Default assignees
 
 Every rolled-forward period used to arrive completely unassigned, so somebody
-re-assigned the same people to the same steps every month. Two layers now fill
+re-assigned the same people to the same steps every month. Three layers now fill
 them in at generation time:
 
 | Layer | Where | Means |
 | --- | --- | --- |
 | Step owner | Project page, per checklist step | "Reviewer Layer 2 is always Marcus" |
 | Engagement owner | Assignment page → Default owner | "Dana owns Bluepoint's bookkeeping" |
+| Project owner | Admin → Employees → Edit → **Projects they handle** | "Priya does our bookkeeping" |
 
-**The step owner wins; the engagement owner fills in the rest.** A step owner
+The usual setup is just the project owner: tick the projects on each employee's
+page, and every client assigned to those projects arrives with every task
+assigned to that person, period after period. A project has one owner; ticking
+it for someone else moves it. Taking a project on also fills that project's
+open tasks that have nobody assigned (it never moves a task someone has).
+
+**The step owner wins, then the engagement owner, then the project owner.** A step owner
 expresses a role or skill — the person who does second review does second review,
 regardless of whose client it is — while the engagement owner is the catch-all.
 Resolving it the other way would let a client owner silently take over a
@@ -571,7 +646,7 @@ In short:
 ## Tests
 
 ```bash
-npm test     # 656 assertions across thirteen scripts, no framework, no database
+npm test     # 734 assertions across fifteen scripts, no framework, no database
 ```
 
 Among them: `test-core-rules.ts` covers the rules the app stands on —

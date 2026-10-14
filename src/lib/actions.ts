@@ -4,7 +4,18 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { canMarkDone } from "@/lib/workflow";
-import { resolveCurrentPeriod, getRecurring, isPeriodBefore } from "@/lib/periods";
+import { getRecurring, isPeriodBefore, resolvePeriod } from "@/lib/periods";
+import {
+  checkAnchor,
+  currentPeriodName,
+  effectiveAnchor,
+  firstPeriodName,
+  formatPeriodName,
+  isoDate,
+  nextPeriodName,
+  parsePeriodName,
+  usesAnchor,
+} from "@/lib/period-names";
 import { openPeriodForAssignment, generatePeriods } from "@/lib/scheduler";
 import { maybeRollPeriodForward } from "@/lib/rollover";
 import {
@@ -23,6 +34,7 @@ import { decryptField } from "@/lib/encryption";
 import { maskSsn, maskTaxId, protectSsn, protectTaxId } from "@/lib/sensitive-fields";
 import { rateLimit } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/auth";
+import { normalizeChecklist } from "@/lib/checklist";
 import {
   requireActivityAccess,
   requireAdminAction,
@@ -349,7 +361,11 @@ export async function restoreClient(clientId: string) {
   for (const e of engagements) {
     const type = e.project.recurring.type;
     if (type === "ONE_TIME" || e.project._count.subtasks === 0) continue;
-    const today = (await resolveCurrentPeriod(e.project.recurringId, type)).name;
+    const today = currentPeriodName(
+      type,
+      new Date(),
+      effectiveAnchor(e.project.recurrenceAnchor, e.recurrenceAnchor)
+    );
     if (!e.currentPeriod || !isPeriodBefore(type, e.currentPeriod, today)) continue;
     await openPeriodForAssignment({
       clientId,
@@ -474,8 +490,10 @@ export async function assignProjectToClient(
     include: { recurring: true },
   });
   if (!periodName) {
-    const period = await resolveCurrentPeriod(project.recurringId, project.recurring.type);
-    periodName = period.name;
+    // Today's period on the project's schedule — or, when its start date is
+    // still in the future, the period that begins on that date.
+    periodName = firstPeriodName(project.recurring.type, new Date(), project.recurrenceAnchor);
+    await resolvePeriod(project.recurringId, project.recurring.type, periodName);
   }
 
   await prisma.projectClientMap.create({
@@ -530,6 +548,67 @@ export async function assignProjectToClient(
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/activity");
+}
+
+// --- Running two periods at once ----------------------------------------------
+//
+// Opens the engagement's next period now: November's bookkeeping can begin
+// while October's review is still being finished. The earlier period stays
+// open on the dashboard, the Tasks list and the engagement page until its last
+// step is done; each period keeps its own checklist, files and due date.
+//
+// Only one period ahead of the calendar: you can start next month's work
+// during this month, not three months out.
+export async function startNextPeriod(clientId: string, projectId: string) {
+  const user = await requireEngagementAccess(clientId, projectId);
+  const engagement = await prisma.projectClientMap.findUniqueOrThrow({
+    where: { clientId_projectId: { clientId, projectId } },
+    include: { project: { include: { recurring: true } }, client: { select: { companyName: true, archivedAt: true } } },
+  });
+  const type = engagement.project.recurring.type;
+  if (type === "ONE_TIME") throw new Error("A one-time project doesn't have a next period.");
+  if (!engagement.active || engagement.client.archivedAt) throw new Error("This engagement isn't active.");
+  if (!engagement.currentPeriod) throw new Error("This engagement has no current period yet.");
+
+  const current = parsePeriodName(engagement.currentPeriod);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (current.start.getTime() > today.getTime()) {
+    throw new Error(
+      `${formatPeriodName(engagement.currentPeriod)} hasn't started yet, so the period after it can't be opened.`
+    );
+  }
+
+  const next = nextPeriodName(
+    type,
+    engagement.currentPeriod,
+    effectiveAnchor(engagement.project.recurrenceAnchor, engagement.recurrenceAnchor)
+  );
+  if (!next) throw new Error("This project doesn't have a next period.");
+
+  const result = await openPeriodForAssignment({
+    clientId,
+    projectId,
+    periodName: next,
+    project: {
+      recurringId: engagement.project.recurringId,
+      recurring: { type },
+      dueOffsetDays: engagement.project.dueOffsetDays,
+    },
+    clientOverride: engagement.dueOffsetDays,
+    engagementDefaultAssigneeId: engagement.defaultAssigneeId,
+    projectOwnerId: engagement.project.ownerId,
+    actor: actorFrom(user),
+  });
+  await prisma.projectClientMap.update({
+    where: { clientId_projectId: { clientId, projectId } },
+    data: { currentPeriod: next },
+  });
+
+  revalidateAssignment(clientId, projectId);
+  revalidatePath("/");
+  revalidatePath("/tasks");
+  return { periodName: next, tasks: result.activitiesCreated };
 }
 
 // --- Client contacts --------------------------------------------------------
@@ -856,6 +935,113 @@ async function assertNotLastAdmin(employeeId: string) {
   }
 }
 
+// --- Projects an employee handles ---------------------------------------------
+//
+// Project.ownerId: "this person does our bookkeeping". Every engagement of the
+// project is pre-assigned to them, step by step, unless the engagement has its
+// own owner or a step names a specialist (src/lib/default-assignees.ts). A
+// project has one owner, so ticking a project here takes it over from whoever
+// had it.
+//
+// Taking a project on also fills in that project's open tasks that nobody is
+// assigned to yet. It never reassigns a task someone already has.
+
+export async function setEmployeeProjects(employeeId: string, projectIds: string[]) {
+  const user = await requireAdminAction();
+  const employee = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  if (!employee) throw new Error("That employee no longer exists.");
+
+  const wanted = new Set(projectIds);
+  const projects = await prisma.project.findMany({
+    select: { id: true, name: true, ownerId: true, owner: { select: { firstName: true, lastName: true } } },
+  });
+  const known = new Set(projects.map((p) => p.id));
+  for (const id of wanted) if (!known.has(id)) throw new Error("One of those projects no longer exists.");
+
+  const gained = projects.filter((p) => wanted.has(p.id) && p.ownerId !== employeeId);
+  const released = projects.filter((p) => !wanted.has(p.id) && p.ownerId === employeeId);
+  const name = employeeName(employee);
+
+  await prisma.$transaction([
+    ...gained.map((p) => prisma.project.update({ where: { id: p.id }, data: { ownerId: employeeId } })),
+    ...released.map((p) => prisma.project.update({ where: { id: p.id }, data: { ownerId: null } })),
+  ]);
+
+  // Fill the blanks on work already open for the projects just taken on: rows
+  // with no assignee, not done, whose step and engagement don't name anyone
+  // else (those would win over the project owner anyway).
+  let filled = 0;
+  if (gained.length > 0) {
+    const gainedIds = gained.map((p) => p.id);
+    const [stepDefaults, engagementDefaults, blanks] = await Promise.all([
+      prisma.projectTaskMap.findMany({
+        where: { projectId: { in: gainedIds }, defaultAssigneeId: { not: null } },
+        select: { projectId: true, subTaskId: true },
+      }),
+      prisma.projectClientMap.findMany({
+        where: { projectId: { in: gainedIds }, defaultAssigneeId: { not: null } },
+        select: { projectId: true, clientId: true },
+      }),
+      prisma.clientActivity.findMany({
+        where: {
+          projectId: { in: gainedIds },
+          assigneeId: null,
+          status: { not: "DONE" },
+          client: { archivedAt: null },
+        },
+        select: { id: true, projectId: true, clientId: true, subTaskId: true },
+      }),
+    ]);
+    const stepTaken = new Set(stepDefaults.map((d) => `${d.projectId}:${d.subTaskId}`));
+    const engagementTaken = new Set(engagementDefaults.map((d) => `${d.projectId}:${d.clientId}`));
+    const ids = blanks
+      .filter(
+        (a) =>
+          !stepTaken.has(`${a.projectId}:${a.subTaskId}`) &&
+          !engagementTaken.has(`${a.projectId}:${a.clientId}`)
+      )
+      .map((a) => a.id);
+    if (ids.length > 0) {
+      const res = await prisma.clientActivity.updateMany({
+        where: { id: { in: ids } },
+        data: { assigneeId: employeeId },
+      });
+      filled = res.count;
+    }
+  }
+
+  await recordAuditMany([
+    ...gained.map((p) => ({
+      entityType: "Project",
+      entityId: p.id,
+      action: AUDIT.PROJECT_OWNER_CHANGED,
+      summary: `${p.name} is now handled by ${name}${p.owner ? ` (was ${employeeName(p.owner)})` : ""}`,
+      fromValue: p.ownerId,
+      toValue: employeeId,
+      actor: actorFrom(user),
+    })),
+    ...released.map((p) => ({
+      entityType: "Project",
+      entityId: p.id,
+      action: AUDIT.PROJECT_OWNER_CHANGED,
+      summary: `${p.name} no longer has a default owner (was ${name})`,
+      fromValue: employeeId,
+      toValue: null,
+      actor: actorFrom(user),
+    })),
+  ]);
+
+  revalidatePath(`/admin/employees/${employeeId}/edit`);
+  revalidatePath("/admin/employees");
+  revalidatePath("/projects");
+  revalidatePath("/");
+  revalidatePath("/tasks");
+  return { gained: gained.length, released: released.length, filled };
+}
+
 export async function setEmployeeRole(employeeId: string, role: Role) {
   const admin = await requireAdmin();
   if (role !== "ADMIN") await assertNotLastAdmin(employeeId);
@@ -969,7 +1155,23 @@ export type ProjectFormInput = {
   // The service's deadline rule: days after the period's end date. Omitted by
   // older callers, which keeps the previous behaviour (due on the last day).
   dueOffsetDays?: number;
+  // The date the periods line up to, as yyyy-mm-dd. "" or omitted = the
+  // calendar default. See src/lib/period-names.ts.
+  recurrenceAnchor?: string | null;
 };
+
+// A start date from a form, validated for the cadence. null = calendar default.
+// One-time and semi-monthly projects have fixed periods, so any date is dropped.
+function parseAnchorInput(raw: string | null | undefined, type: RecurringType): Date | null {
+  const text = (raw ?? "").trim();
+  if (!text || !usesAnchor(type)) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) throw new Error("Enter the start date as a full date.");
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const check = checkAnchor(type, date);
+  if (!check.ok) throw new Error(check.reason);
+  return date;
+}
 
 export async function createProject(data: ProjectFormInput) {
   await requireAdmin();
@@ -983,6 +1185,7 @@ export async function createProject(data: ProjectFormInput) {
         description: data.description?.trim() || null,
         recurringId: recurring.id,
         dueOffsetDays: clampOffset(data.dueOffsetDays ?? 0),
+        recurrenceAnchor: parseAnchorInput(data.recurrenceAnchor, data.recurring),
       },
     });
     revalidatePath("/admin/projects");
@@ -1005,6 +1208,7 @@ export async function updateProject(projectId: string, data: ProjectFormInput) {
         description: data.description?.trim() || null,
         recurringId: recurring.id,
         dueOffsetDays: clampOffset(data.dueOffsetDays ?? 0),
+        recurrenceAnchor: parseAnchorInput(data.recurrenceAnchor, data.recurring),
       },
     });
     // The deadline rule may have moved; existing task rows are stale until
@@ -1059,6 +1263,10 @@ export async function updateProjectSubTask(subTaskId: string, data: ProjectSubTa
 
 export async function deleteProjectSubTask(subTaskId: string) {
   await requireAdmin();
+  const step = await prisma.projectSubTask.findUnique({ where: { id: subTaskId }, select: { systemKey: true } });
+  if (step?.systemKey) {
+    throw new Error("This is the universal final step every project ends with, so it can't be deleted.");
+  }
   const [inMap, inActivity] = await Promise.all([
     prisma.projectTaskMap.count({ where: { subTaskId } }),
     prisma.clientActivity.count({ where: { subTaskId } }),
@@ -1072,25 +1280,31 @@ export async function deleteProjectSubTask(subTaskId: string) {
 
 // --- Project task map (which subtasks belong to which project, in what order)
 
+// `position` is the step number it should become (1 = first). Steps from that
+// number on move down one, and the universal final step stays last.
 export async function addProjectTaskMap(
   projectId: string,
   subTaskId: string,
-  sequence: number
+  position: number
 ) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const existing = await prisma.projectTaskMap.findUnique({
     where: { projectId_subTaskId: { projectId, subTaskId } },
   });
   if (existing) {
     throw new Error("That task is already on this project's checklist.");
   }
-  await prisma.projectTaskMap.create({ data: { projectId, subTaskId, sequence } });
-  revalidatePath("/admin/projects-task-map");
-  revalidatePath("/clients/new");
+  await prisma.projectTaskMap.create({ data: { projectId, subTaskId, sequence: 0 } });
+  await normalizeChecklist(projectId, {
+    insert: { id: subTaskId, position },
+    actor: actorFrom(user),
+  });
+  revalidateProjectBuilder(projectId);
 }
 
 export async function removeProjectTaskMap(projectId: string, subTaskId: string) {
   await requireAdmin();
+  await assertNotUniversalStep(subTaskId);
   const inUse = await prisma.clientActivity.count({ where: { projectId, subTaskId } });
   if (inUse > 0) {
     throw new Error(
@@ -1100,8 +1314,15 @@ export async function removeProjectTaskMap(projectId: string, subTaskId: string)
   await prisma.projectTaskMap.delete({
     where: { projectId_subTaskId: { projectId, subTaskId } },
   });
-  revalidatePath("/admin/projects-task-map");
-  revalidatePath("/clients/new");
+  await normalizeChecklist(projectId);
+  revalidateProjectBuilder(projectId);
+}
+
+async function assertNotUniversalStep(subTaskId: string) {
+  const step = await prisma.projectSubTask.findUnique({ where: { id: subTaskId }, select: { systemKey: true } });
+  if (step?.systemKey) {
+    throw new Error("Every project ends with the universal \"Completed Y/N\" step, so it can't be removed or moved.");
+  }
 }
 
 // --- Project builder (admin) --------------------------------------------------
@@ -1116,10 +1337,10 @@ export async function removeProjectTaskMap(projectId: string, subTaskId: string)
 // ProjectTaskMap row on this project, so everything downstream (assigning
 // clients, period rollover, admin pages) keeps working unchanged.
 //
-// Ordering: the checklist is renumbered 10, 20, 30… on every reorder, the
-// same convention the seeded templates use. Reordering the template affects
-// task rows generated from here on (new assignments, next period); rows
-// already generated for a client's current period keep their taskSeqNo.
+// Ordering: steps are numbered 1, 2, 3… and every change goes through
+// normalizeChecklist (src/lib/checklist.ts), which keeps the universal
+// "Completed Y/N" step last and renumbers the periods still in progress to
+// match. Finished periods keep the numbers they were done under.
 
 function revalidateProjectBuilder(projectId: string) {
   revalidatePath("/projects");
@@ -1130,8 +1351,6 @@ function revalidateProjectBuilder(projectId: string) {
   revalidatePath("/clients/new");
   revalidatePath("/reports/project-task-compare");
 }
-
-const SEQUENCE_STEP = 10;
 
 export async function createOwnProject(data: ProjectFormInput) {
   await requireAdminAction();
@@ -1145,6 +1364,7 @@ export async function createOwnProject(data: ProjectFormInput) {
         description: data.description?.trim() || null,
         recurringId: recurring.id,
         dueOffsetDays: clampOffset(data.dueOffsetDays ?? 0),
+        recurrenceAnchor: parseAnchorInput(data.recurrenceAnchor, data.recurring),
       },
     });
     revalidateProjectBuilder(project.id);
@@ -1154,30 +1374,50 @@ export async function createOwnProject(data: ProjectFormInput) {
   }
 }
 
-export async function addChecklistTask(projectId: string, name: string) {
-  await requireAdminAction();
+// Adds a step. `position` is the number it should become — insert between
+// steps 4 and 5 by passing 5, and the old 5 onward each move down one.
+// Omitted = the end of the list (just above the universal final step).
+//
+// Periods already under way get the new step too, unless their work is
+// already past that point (adding an open step in front of finished ones
+// would break the finish-in-order rule).
+export async function addChecklistTask(projectId: string, name: string, position?: number) {
+  const user = await requireAdminAction();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Task name is required.");
-  await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
-
-  const last = await prisma.projectTaskMap.findFirst({
-    where: { projectId },
-    orderBy: { sequence: "desc" },
-  });
-  const sequence = (last?.sequence ?? 0) + SEQUENCE_STEP;
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
 
   const created = await prisma.projectSubTask.create({
-    data: {
-      name: trimmed,
-      taskMaps: { create: { projectId, sequence } },
-    },
+    data: { name: trimmed, taskMaps: { create: { projectId, sequence: 0 } } },
+  });
+  const steps = await prisma.projectTaskMap.count({
+    where: { projectId, subTask: { systemKey: null }, NOT: { subTaskId: created.id } },
+  });
+  const at = position && Number.isFinite(position) ? Math.max(1, Math.min(steps + 1, Math.trunc(position))) : steps + 1;
+  const result = await normalizeChecklist(projectId, {
+    insert: { id: created.id, position: at },
+    actor: actorFrom(user),
+  });
+  await recordAudit({
+    entityType: "Project",
+    entityId: projectId,
+    action: AUDIT.CHECKLIST_CHANGED,
+    summary:
+      `Added step ${at} "${trimmed}" to ${project.name}` +
+      (result.addedToOpenPeriods > 0
+        ? ` — also added to ${result.addedToOpenPeriods} period${result.addedToOpenPeriods === 1 ? "" : "s"} in progress`
+        : ""),
+    actor: actorFrom(user),
   });
   revalidateProjectBuilder(projectId);
-  return { subTaskId: created.id, sequence };
+  revalidatePath("/");
+  revalidatePath("/tasks");
+  return { subTaskId: created.id, position: at, ...result };
 }
 
 export async function renameChecklistTask(projectId: string, subTaskId: string, name: string) {
   await requireAdminAction();
+  await assertNotUniversalStep(subTaskId);
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Task name is required.");
 
@@ -1195,15 +1435,12 @@ export async function renameChecklistTask(projectId: string, subTaskId: string, 
 
 export async function removeChecklistTask(projectId: string, subTaskId: string) {
   await requireAdminAction();
+  await assertNotUniversalStep(subTaskId);
   const inUse = await prisma.clientActivity.count({ where: { projectId, subTaskId } });
   if (inUse > 0) {
     throw new Error("Clients already have activity on this step, so it can't be removed.");
   }
 
-  const remaining = await prisma.projectTaskMap.findMany({
-    where: { projectId, NOT: { subTaskId } },
-    orderBy: { sequence: "asc" },
-  });
   const orphaned =
     (await prisma.projectTaskMap.count({ where: { subTaskId, NOT: { projectId } } })) === 0 &&
     (await prisma.clientActivity.count({ where: { subTaskId } })) === 0;
@@ -1213,14 +1450,9 @@ export async function removeChecklistTask(projectId: string, subTaskId: string) 
     // A task created for this project only would otherwise linger in the
     // master list forever; drop it when nothing else references it.
     ...(orphaned ? [prisma.projectSubTask.delete({ where: { id: subTaskId } })] : []),
-    // Close the gap so the numbering stays 10, 20, 30…
-    ...remaining.map((tm, i) =>
-      prisma.projectTaskMap.update({
-        where: { projectId_subTaskId: { projectId, subTaskId: tm.subTaskId } },
-        data: { sequence: (i + 1) * SEQUENCE_STEP },
-      })
-    ),
   ]);
+  // Closes the gap so the numbering stays 1, 2, 3…
+  await normalizeChecklist(projectId);
   revalidateProjectBuilder(projectId);
 }
 
@@ -1239,15 +1471,11 @@ export async function reorderChecklist(projectId: string, orderedSubTaskIds: str
     throw new Error("The checklist changed while you were reordering. Refresh and try again.");
   }
 
-  await prisma.$transaction(
-    orderedSubTaskIds.map((subTaskId, i) =>
-      prisma.projectTaskMap.update({
-        where: { projectId_subTaskId: { projectId, subTaskId } },
-        data: { sequence: (i + 1) * SEQUENCE_STEP },
-      })
-    )
-  );
+  // The universal final step goes back to the end whatever order arrived.
+  await normalizeChecklist(projectId, { orderedIds: orderedSubTaskIds });
   revalidateProjectBuilder(projectId);
+  revalidatePath("/");
+  revalidatePath("/tasks");
 }
 
 // --- Accounting periods -------------------------------------------------
@@ -1471,6 +1699,79 @@ export async function bulkAssignActivities(
 
   revalidateAssignment(clientId, projectId);
   return result.count;
+}
+
+// --- Client notes ------------------------------------------------------------
+//
+// Notes about the client as a whole ("prefers calls to email", "selling the
+// business in March"), not one project or task. Anyone who can open the client
+// can read and add them; only the author or an admin can edit or remove one.
+
+const MAX_NOTE_LENGTH = 10_000;
+
+function cleanNoteBody(raw: string): string {
+  const body = raw.trim();
+  if (!body) throw new Error("Note can't be empty.");
+  if (body.length > MAX_NOTE_LENGTH) throw new Error("That note is too long — split it into a few notes.");
+  return body;
+}
+
+export async function addClientNote(clientId: string, data: { body: string }) {
+  const user = await requireClientAccess(clientId);
+  const body = cleanNoteBody(data.body);
+  const note = await prisma.clientNote.create({ data: { clientId, body, authorId: user.id } });
+  await recordAudit({
+    entityType: "ClientNote",
+    entityId: note.id,
+    action: AUDIT.CLIENT_NOTE_ADDED,
+    summary: `Added a client note: "${body.length > 80 ? `${body.slice(0, 77)}…` : body}"`,
+    clientId,
+    actor: actorFrom(user),
+  });
+  revalidatePath(`/clients/${clientId}`);
+  return { id: note.id };
+}
+
+async function requireClientNoteOwnership(id: string) {
+  const note = await prisma.clientNote.findUnique({
+    where: { id },
+    select: { clientId: true, authorId: true },
+  });
+  if (!note) throw new Error("That note no longer exists.");
+  const user = await requireClientAccess(note.clientId);
+  if (user.role !== "ADMIN" && note.authorId !== user.id) {
+    throw new Error("Only the person who wrote a note (or an admin) can change it.");
+  }
+  return { user, clientId: note.clientId };
+}
+
+export async function updateClientNote(id: string, data: { body: string }) {
+  const { user, clientId } = await requireClientNoteOwnership(id);
+  const body = cleanNoteBody(data.body);
+  await prisma.clientNote.update({ where: { id }, data: { body } });
+  await recordAudit({
+    entityType: "ClientNote",
+    entityId: id,
+    action: AUDIT.CLIENT_NOTE_CHANGED,
+    summary: "Edited a client note",
+    clientId,
+    actor: actorFrom(user),
+  });
+  revalidatePath(`/clients/${clientId}`);
+}
+
+export async function deleteClientNote(id: string) {
+  const { user, clientId } = await requireClientNoteOwnership(id);
+  await prisma.clientNote.delete({ where: { id } });
+  await recordAudit({
+    entityType: "ClientNote",
+    entityId: id,
+    action: AUDIT.CLIENT_NOTE_DELETED,
+    summary: "Removed a client note",
+    clientId,
+    actor: actorFrom(user),
+  });
+  revalidatePath(`/clients/${clientId}`);
 }
 
 export async function addAssignmentNote(
@@ -1735,6 +2036,72 @@ export async function setProjectDueRule(projectId: string, offsetDays: number) {
   return { updated };
 }
 
+// --- Recurrence start dates ---------------------------------------------------
+//
+// When a project's periods begin (src/lib/period-names.ts). Not retroactive:
+// periods already open keep their dates, and the next one bridges onto the new
+// schedule, so nothing is skipped or done twice. Independent of the due date.
+
+function describeAnchorForAudit(anchor: Date | null): string {
+  return anchor ? anchor.toISOString().slice(0, 10) : "calendar default";
+}
+
+export async function setProjectRecurrenceAnchor(projectId: string, value: string) {
+  const user = await requireAdminAction();
+  const project = await prisma.project.findUniqueOrThrow({
+    where: { id: projectId },
+    include: { recurring: true },
+  });
+  const anchor = parseAnchorInput(value, project.recurring.type);
+  await prisma.project.update({ where: { id: projectId }, data: { recurrenceAnchor: anchor } });
+  await recordAudit({
+    entityType: "Project",
+    entityId: projectId,
+    action: AUDIT.SCHEDULE_CHANGED,
+    summary: `${project.name} now recurs from ${anchor ? isoDate(anchor) : "the calendar default"}`,
+    fromValue: describeAnchorForAudit(project.recurrenceAnchor),
+    toValue: describeAnchorForAudit(anchor),
+    actor: actorFrom(user),
+  });
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/admin/projects");
+}
+
+// One client's own start date. "" goes back to the project's.
+export async function setAssignmentRecurrenceAnchor(clientId: string, projectId: string, value: string) {
+  const user = await requireEngagementAccess(clientId, projectId);
+  const engagement = await prisma.projectClientMap.findUniqueOrThrow({
+    where: { clientId_projectId: { clientId, projectId } },
+    include: { project: { include: { recurring: true } }, client: { select: { companyName: true } } },
+  });
+  const type = engagement.project.recurring.type;
+  const anchor = parseAnchorInput(value, type);
+  await prisma.projectClientMap.update({
+    where: { clientId_projectId: { clientId, projectId } },
+    data: { recurrenceAnchor: anchor },
+  });
+  const next =
+    engagement.currentPeriod && type !== "ONE_TIME"
+      ? nextPeriodName(type, engagement.currentPeriod, effectiveAnchor(engagement.project.recurrenceAnchor, anchor))
+      : null;
+  await recordAudit({
+    entityType: "ProjectClientMap",
+    entityId: `${clientId}:${projectId}`,
+    action: AUDIT.SCHEDULE_CHANGED,
+    summary: anchor
+      ? `${engagement.client.companyName}'s ${engagement.project.name} now recurs from ${isoDate(anchor)}`
+      : `${engagement.client.companyName}'s ${engagement.project.name} follows the project's start date again`,
+    fromValue: describeAnchorForAudit(engagement.recurrenceAnchor),
+    toValue: describeAnchorForAudit(anchor),
+    clientId,
+    projectId,
+    contextLabel: `${engagement.client.companyName} · ${engagement.project.name}`,
+    actor: actorFrom(user),
+  });
+  revalidateAssignment(clientId, projectId);
+  return { nextPeriod: next };
+}
+
 // A step's internal milestone, relative to the engagement's deadline.
 // null clears it (the step shares the project's due date again).
 export async function setChecklistTaskDueOffset(
@@ -1938,7 +2305,7 @@ export async function applyDefaultAssignees(
   const [assignment, taskMaps, unassigned] = await Promise.all([
     prisma.projectClientMap.findUniqueOrThrow({
       where: { clientId_projectId: { clientId, projectId } },
-      select: { defaultAssigneeId: true },
+      select: { defaultAssigneeId: true, project: { select: { ownerId: true } } },
     }),
     prisma.projectTaskMap.findMany({
       where: { projectId },
@@ -1953,6 +2320,7 @@ export async function applyDefaultAssignees(
   const defaults = resolveDefaultAssignees({
     steps: taskMaps,
     engagementDefaultId: assignment.defaultAssigneeId,
+    projectOwnerId: assignment.project.ownerId,
   });
 
   const updates = unassigned

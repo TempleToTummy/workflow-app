@@ -5,18 +5,13 @@ import { ArchiveClientButton, ArchivedClientBanner } from "@/components/client-a
 import { ClientTagEditor } from "@/components/client-tag-editor";
 import { AssignProjectPanel } from "@/components/assign-project-panel";
 import { ContactManager } from "@/components/contact-manager";
+import { ClientNotes } from "@/components/assignment-notes";
 import { SensitiveValue } from "@/components/sensitive-value";
 import { maskSsn, maskTaxId } from "@/lib/sensitive-fields";
 import { requireUser, assigneeScope } from "@/lib/auth";
 import { formatBytes, formatDate } from "@/lib/dates";
 import { redirect } from "next/navigation";
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Annual",
-  ONE_TIME: "One time",
-};
+import { RECURRING_SHORT_LABELS as RECURRING_LABELS, formatPeriodName } from "@/lib/period-names";
 
 export default async function ClientDetailPage({
   params,
@@ -53,6 +48,10 @@ export default async function ClientDetailPage({
         businessType: true,
         corpType: true,
         contacts: { orderBy: { createdAt: "asc" } },
+        clientNotes: {
+          orderBy: { createdAt: "desc" },
+          include: { author: { select: { firstName: true, lastName: true } } },
+        },
         projectAssignments: { include: { project: true }, orderBy: { createdAt: "asc" } },
       },
     }),
@@ -261,6 +260,19 @@ export default async function ClientDetailPage({
       </div>
 
       <div className="mt-6">
+        <ClientNotes
+          clientId={client.id}
+          notes={client.clientNotes.map((n) => ({
+            id: n.id,
+            body: n.body,
+            authorName: n.author ? `${n.author.firstName} ${n.author.lastName}` : null,
+            createdAt: n.createdAt.toISOString(),
+            canEdit: user.role === "ADMIN" || n.authorId === user.id,
+          }))}
+        />
+      </div>
+
+      <div className="mt-6">
         <ContactManager
           clientId={client.id}
           contacts={client.contacts.map((c) => ({
@@ -308,7 +320,9 @@ export default async function ClientDetailPage({
                     {a.active ? "Active" : "Inactive"}
                   </span>
                 </td>
-                <td className="tabular py-2 text-ink-muted">{a.currentPeriod ?? "—"}</td>
+                <td className="tabular py-2 text-ink-muted">
+                  {a.currentPeriod ? formatPeriodName(a.currentPeriod) : "—"}
+                </td>
                 <td className="py-2 text-right">
                   <Link
                     href={`/assignments/${client.id}/${a.projectId}`}
@@ -376,7 +390,7 @@ export default async function ClientDetailPage({
                     <div key={periodName || "none"} className="overflow-hidden rounded-md border border-line">
                       <div className="flex items-center justify-between border-b border-line bg-black/[0.02] px-3 py-1.5">
                         <span className="tabular text-xs font-medium text-ink-muted">
-                          {periodName || "No period"}
+                          {periodName ? formatPeriodName(periodName) : "No period"}
                           {isCurrent && <span className="ml-1.5 font-sans text-accent">· current</span>}
                         </span>
                         <Link

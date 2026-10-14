@@ -113,6 +113,8 @@ export async function globalSearch(
   };
   const commentWhere = { body: like(q), activity: { ...engagementScope, ...viaClient } };
   const noteWhere = { body: like(q), ...engagementScope, ...viaClient };
+  // Client-level notes: visible wherever the client is.
+  const clientNoteWhere = { body: like(q), client: { ...clientScope, ...clientVisibility } };
   const fileWhere = { filename: like(q), ...engagementScope, ...viaClient };
   const emailWhere = {
     AND: [
@@ -147,6 +149,8 @@ export async function globalSearch(
     fileTotal,
     emails,
     emailTotal,
+    clientNotes,
+    clientNoteTotal,
   ] = await Promise.all([
     prisma.client.findMany({ where: clientWhere, take, orderBy: { companyName: "asc" }, include: { tags: { include: { tag: true } } } }),
     prisma.client.count({ where: clientWhere }),
@@ -184,6 +188,13 @@ export async function globalSearch(
     prisma.document.count({ where: fileWhere }),
     prisma.emailMessage.findMany({ where: emailWhere, take, include: { client: true }, orderBy: { createdAt: "desc" } }),
     prisma.emailMessage.count({ where: emailWhere }),
+    prisma.clientNote.findMany({
+      where: clientNoteWhere,
+      take,
+      include: { client: true, author: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.clientNote.count({ where: clientNoteWhere }),
   ]);
 
   const firstMatch = (q: string, ...fields: (string | null | undefined)[]) =>
@@ -259,15 +270,30 @@ export async function globalSearch(
       })),
     },
     notes: {
-      total: noteTotal,
-      hits: notes.map((n) => ({
-        id: n.id,
-        title: n.author ? `Note by ${n.author.firstName} ${n.author.lastName}` : "Note",
-        context: `${n.client.companyName} · ${n.project.name}`,
-        snippet: excerpt(n.body, q),
-        href: assignmentHref(n.clientId, n.projectId, { tab: "notes" }),
-        badge: n.createdAt.toLocaleDateString(),
-      })),
+      total: noteTotal + clientNoteTotal,
+      hits: [
+        ...notes.map((n) => ({
+          at: n.createdAt,
+          id: n.id,
+          title: n.author ? `Note by ${n.author.firstName} ${n.author.lastName}` : "Note",
+          context: `${n.client.companyName} · ${n.project.name}`,
+          snippet: excerpt(n.body, q),
+          href: assignmentHref(n.clientId, n.projectId, { tab: "notes" }),
+          badge: n.createdAt.toLocaleDateString(),
+        })),
+        ...clientNotes.map((n) => ({
+          at: n.createdAt,
+          id: n.id,
+          title: n.author ? `Client note by ${n.author.firstName} ${n.author.lastName}` : "Client note",
+          context: n.client.companyName,
+          snippet: excerpt(n.body, q),
+          href: `/clients/${n.clientId}`,
+          badge: n.createdAt.toLocaleDateString(),
+        })),
+      ]
+        .sort((a, b) => b.at.getTime() - a.at.getTime())
+        .slice(0, take)
+        .map((h) => ({ id: h.id, title: h.title, context: h.context, snippet: h.snippet, href: h.href, badge: h.badge })),
     },
     files: {
       total: fileTotal,

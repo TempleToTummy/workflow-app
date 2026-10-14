@@ -52,6 +52,16 @@ check("describes a step specialist", describeDefaultSource("marcus", "dana", nam
 check("describes an engagement owner", describeDefaultSource(null, "dana", nameOf), "Dana Ruiz (engagement)");
 check("describes nothing set", describeDefaultSource(null, null, nameOf), "Unassigned");
 
+// The project owner (set on the employee's page): covers every client and
+// step nobody named, which is what makes a new client arrive fully assigned.
+const ownerOnly = resolveDefaultAssignees({ steps, engagementDefaultId: null, projectOwnerId: "priya" });
+check("project owner fills every unnamed step", [ownerOnly.get("doc"), ownerOnly.get("entry")], ["priya", "priya"]);
+check("step specialist beats project owner", ownerOnly.get("review2"), "marcus");
+const clientOwnerWins = resolveDefaultAssignees({ steps, engagementDefaultId: "dana", projectOwnerId: "priya" });
+check("this client's own owner beats project owner", clientOwnerWins.get("doc"), "dana");
+names.priya = "Priya Nair";
+check("describes a project owner", describeDefaultSource(null, null, nameOf, "priya"), "Priya Nair (project owner)");
+
 console.log("\nreset tokens");
 const raw = newToken();
 check("token is 256 bits of hex", raw.length, 64);

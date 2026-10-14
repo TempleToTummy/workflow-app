@@ -39,9 +39,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// How often a project's work repeats. Periods, their names and what "next"
+// means are all in src/lib/period-names.ts.
 enum RecurringType {
+  WEEKLY
+  BIWEEKLY // every 14 days
+  SEMI_MONTHLY // 1st–15th and 16th–end of month
   MONTHLY
   QUARTERLY
+  SEMI_ANNUAL // every 6 months
   ANNUAL
   ONE_TIME
 }
@@ -160,6 +166,24 @@ model Client {
   emails             EmailMessage[]
   timeEntries        TimeEntry[]
   clientRequests     ClientRequest[]
+  clientNotes        ClientNote[]
+}
+
+// A running note about a client as a whole — not one project or one task
+// ("prefers phone calls", "owner is selling the business in March"). Same
+// rules as AssignmentNote: newest first, only the author or an admin can
+// change or remove one.
+model ClientNote {
+  id        String    @id @default(cuid())
+  clientId  String
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  body      String
+  authorId  String?
+  author    Employee? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([clientId, createdAt])
 }
 
 // A label on a client ("VIP", "Needs 1099s", "Late payer"). Unlike groupName,
@@ -294,9 +318,11 @@ model Employee {
   assignedActivities  ClientActivity[]
   completedActivities ClientActivity[]     @relation("ActivityCompletedBy")
   stepDefaults        ProjectTaskMap[]     @relation("StepDefaultAssignee")
+  ownedProjects       Project[]            @relation("ProjectOwner")
   engagementDefaults  ProjectClientMap[]   @relation("EngagementDefaultAssignee")
   uploadedDocuments   Document[]
   authoredNotes       AssignmentNote[]
+  authoredClientNotes ClientNote[]
   sentEmails          EmailMessage[]
   timeEntries         TimeEntry[]
   comments            TaskComment[]
@@ -364,20 +390,33 @@ model AccountingPeriod {
 // --- Workflow templates ----------------------------------------------------
 
 model Project {
-  id            String           @id @default(cuid())
-  name          String           @unique
-  description   String?
-  recurringId   String
-  recurring     ProjectRecurring @relation(fields: [recurringId], references: [id])
+  id               String           @id @default(cuid())
+  name             String           @unique
+  description      String?
+  recurringId      String
+  recurring        ProjectRecurring @relation(fields: [recurringId], references: [id])
   // The service's deadline rule: how many days AFTER the accounting period's
   // end date the work is actually due. 0 = due on the last day of the period
   // (the old hardcoded behaviour), 20 = sales tax due the 20th of the
   // following month, 105 = an individual return due Apr 15 for a Dec 31 year
   // end. Overridable per client (ProjectClientMap) and per step
   // (ProjectTaskMap). See src/lib/due-dates.ts.
-  dueOffsetDays Int              @default(0)
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  dueOffsetDays    Int              @default(0)
+  // The date the project's periods are lined up to — the "start date it
+  // recurs on". A weekly project anchored on a Wednesday runs Wed–Tue; a
+  // monthly one anchored on the 15th runs 15th–14th; an annual one anchored
+  // Jul 1 follows a Jul–Jun fiscal year. null = the calendar default (weeks
+  // from Monday, months from the 1st, years from Jan 1). Overridable per
+  // client (ProjectClientMap.recurrenceAnchor). Independent of the due date:
+  // the next period starts when this one ENDS, never when it's due.
+  recurrenceAnchor DateTime?
+  // The employee who does this kind of work. Every engagement of this project
+  // is pre-assigned to them unless the engagement or a step names someone
+  // else. Set from the employee's edit page ("Projects they handle").
+  ownerId          String?
+  owner            Employee?        @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   subtasks          ProjectTaskMap[]
   clientAssignments ProjectClientMap[]
@@ -390,9 +429,14 @@ model Project {
 }
 
 model ProjectSubTask {
-  id   String  @id @default(cuid())
-  name String
-  note String?
+  id        String  @id @default(cuid())
+  name      String
+  note      String?
+  // Marks a step the app manages itself. "COMPLETED" is the one universal
+  // "Completed Y/N" step: a single shared row that every project's checklist
+  // ends with, instead of a separate copy per project. See
+  // src/lib/universal-step.ts.
+  systemKey String? @unique
 
   taskMaps   ProjectTaskMap[]
   activities ClientActivity[]
@@ -446,6 +490,10 @@ model ProjectClientMap {
   // Per-client override of Project.dueOffsetDays (this client negotiated a
   // different turnaround, or has an extension on file). null = inherit.
   dueOffsetDays     Int?
+  // Per-client override of Project.recurrenceAnchor (this client's fiscal
+  // year starts in July, their payroll runs on alternate Fridays). null =
+  // inherit. A change applies from the next period onwards.
+  recurrenceAnchor  DateTime?
   note              String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt

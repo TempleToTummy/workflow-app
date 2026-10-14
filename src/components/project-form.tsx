@@ -3,8 +3,14 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createProject, updateProject, type ProjectFormInput } from "@/lib/actions";
-import { describeDueRule, SUGGESTED_OFFSETS, clampOffset } from "@/lib/due-dates";
+import {
+  describeDueRule,
+  describeRecurrenceVsDue,
+  SUGGESTED_OFFSETS,
+  clampOffset,
+} from "@/lib/due-dates";
 import type { RecurringType } from "@prisma/client";
+import { RecurrenceFields } from "@/components/recurrence-fields";
 
 type ExistingProject = {
   id: string;
@@ -12,14 +18,9 @@ type ExistingProject = {
   description: string | null;
   recurring: RecurringType;
   dueOffsetDays: number;
+  // yyyy-mm-dd, or "" for the calendar default.
+  recurrenceAnchor: string;
 };
-
-const RECURRING_OPTIONS: { value: RecurringType; label: string }[] = [
-  { value: "MONTHLY", label: "Monthly" },
-  { value: "QUARTERLY", label: "Quarterly" },
-  { value: "ANNUAL", label: "Every Year" },
-  { value: "ONE_TIME", label: "One time only" },
-];
 
 const inputClass =
   "rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
@@ -50,6 +51,7 @@ export function ProjectForm({
       description: String(form.get("description") ?? ""),
       recurring: String(form.get("recurring") ?? "MONTHLY") as RecurringType,
       dueOffsetDays: clampOffset(Number(form.get("dueOffsetDays") ?? 0)),
+      recurrenceAnchor: String(form.get("recurrenceAnchor") ?? ""),
     };
 
     startTransition(async () => {
@@ -82,28 +84,17 @@ export function ProjectForm({
               className={inputClass}
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-ink-muted">Recurring Type</span>
-            <select
-              name="recurring"
-              value={recurring}
-              onChange={(e) => {
-                const next = e.target.value as RecurringType;
-                setRecurring(next);
-                // Only nudge the offset toward the new cadence's default while
-                // creating — editing an existing service must not silently
-                // move a deadline someone set deliberately.
-                if (mode === "create") setOffset(String(SUGGESTED_OFFSETS[next]));
-              }}
-              className={inputClass}
-            >
-              {RECURRING_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <RecurrenceFields
+            defaultType={recurring}
+            defaultAnchor={project?.recurrenceAnchor ?? ""}
+            onTypeChange={(next) => {
+              setRecurring(next);
+              // Only nudge the offset toward the new cadence's default while
+              // creating — editing an existing service must not silently
+              // move a deadline someone set deliberately.
+              if (mode === "create") setOffset(String(SUGGESTED_OFFSETS[next]));
+            }}
+          />
 
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-xs text-ink-muted">Due — days after period ends</span>
@@ -117,7 +108,8 @@ export function ProjectForm({
             />
           </label>
           <p className="text-xs text-ink-muted sm:col-span-2">
-            {describeDueRule(Number(offset) || 0, recurring)} Individual clients can
+            {describeDueRule(Number(offset) || 0, recurring)}{" "}
+            {describeRecurrenceVsDue(Number(offset) || 0, recurring)} Individual clients can
             override this on their engagement.
           </p>
         </div>

@@ -1,14 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import type { RecurringType } from "@prisma/client";
 import { createAccountingPeriod } from "@/lib/actions";
+import { RECURRING_LABELS, RECURRING_TYPES } from "@/lib/period-names";
 
-const RECURRING_OPTIONS = [
-  { value: "MONTHLY", label: "Monthly" },
-  { value: "QUARTERLY", label: "Quarterly" },
-  { value: "ANNUAL", label: "Every Year" },
-  { value: "ONE_TIME", label: "One time only" },
-] as const;
+const RECURRING_OPTIONS = RECURRING_TYPES.map((value) => ({ value, label: RECURRING_LABELS[value] }));
 
 const inputClass =
   "rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
@@ -23,7 +20,7 @@ export function AccountingPeriodForm() {
     const form = new FormData(e.currentTarget);
     const values = {
       name: String(form.get("name") ?? ""),
-      recurring: String(form.get("recurring") ?? "MONTHLY") as (typeof RECURRING_OPTIONS)[number]["value"],
+      recurring: String(form.get("recurring") ?? "MONTHLY") as RecurringType,
       startDate: String(form.get("startDate") ?? ""),
       endDate: String(form.get("endDate") ?? ""),
     };

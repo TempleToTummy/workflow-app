@@ -4,7 +4,13 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RecurringType } from "@prisma/client";
 import { setAssignmentDueOffset } from "@/lib/actions";
-import { describeDueRule, clampOffset, MIN_OFFSET_DAYS, MAX_OFFSET_DAYS } from "@/lib/due-dates";
+import {
+  describeDueRule,
+  describeRecurrenceVsDue,
+  clampOffset,
+  MIN_OFFSET_DAYS,
+  MAX_OFFSET_DAYS,
+} from "@/lib/due-dates";
 
 // The deadline panel on an engagement: what this client's work is due, and the
 // override that makes this client different from everyone else on the service
@@ -85,6 +91,9 @@ export function AssignmentDuePanel({
           </span>
         )}
       </p>
+      {describeRecurrenceVsDue(effective, recurring) && (
+        <p className="mt-1 text-[11px] text-ink-muted">{describeRecurrenceVsDue(effective, recurring)}</p>
+      )}
 
       {editing ? (
         <div className="mt-3 flex flex-col gap-2">

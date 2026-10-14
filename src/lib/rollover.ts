@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { nextPeriodName } from "@/lib/periods";
+import { effectiveAnchor } from "@/lib/period-names";
 import { openPeriodForAssignment } from "@/lib/scheduler";
 
 // Lives outside src/lib/actions.ts so both the single-step and the bulk status
@@ -33,7 +34,11 @@ export async function maybeRollPeriodForward(clientId: string, projectId: string
     where: { id: projectId },
     include: { recurring: true },
   });
-  const nextName = nextPeriodName(project.recurring.type, periodName);
+  const nextName = nextPeriodName(
+    project.recurring.type,
+    periodName,
+    effectiveAnchor(project.recurrenceAnchor, assignment.recurrenceAnchor)
+  );
 
   if (!nextName) {
     await prisma.projectClientMap.update({

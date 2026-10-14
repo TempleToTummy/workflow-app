@@ -4,13 +4,14 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RecurringType } from "@prisma/client";
 import { createOwnProject } from "@/lib/actions";
+import { RECURRING_HINTS, RECURRING_SHORT_LABELS, RECURRING_TYPES, usesAnchor } from "@/lib/period-names";
+import { SchedulePreview, parseDateInput } from "@/components/recurrence-fields";
 
-const RECURRING_OPTIONS: { value: RecurringType; label: string; hint: string }[] = [
-  { value: "MONTHLY", label: "Monthly", hint: "Repeats every month" },
-  { value: "QUARTERLY", label: "Quarterly", hint: "Repeats every quarter" },
-  { value: "ANNUAL", label: "Annual", hint: "Repeats once a year" },
-  { value: "ONE_TIME", label: "One time", hint: "Runs once and closes" },
-];
+const RECURRING_OPTIONS = RECURRING_TYPES.map((value) => ({
+  value,
+  label: RECURRING_SHORT_LABELS[value],
+  hint: RECURRING_HINTS[value],
+}));
 
 const inputClass =
   "rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
@@ -21,6 +22,7 @@ const inputClass =
 export function ProjectCreateForm() {
   const router = useRouter();
   const [recurring, setRecurring] = useState<RecurringType>("MONTHLY");
+  const [anchor, setAnchor] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -33,7 +35,12 @@ export function ProjectCreateForm() {
 
     startTransition(async () => {
       try {
-        const created = await createOwnProject({ name, description, recurring });
+        const created = await createOwnProject({
+          name,
+          description,
+          recurring,
+          recurrenceAnchor: usesAnchor(recurring) ? anchor : "",
+        });
         router.push(`/projects/${created.id}`);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't create project.");
@@ -90,6 +97,26 @@ export function ProjectCreateForm() {
               })}
             </div>
           </fieldset>
+
+          {recurring !== "ONE_TIME" && (
+            <div className="flex flex-col gap-2">
+              {usesAnchor(recurring) && (
+                <label className="flex flex-col gap-1 text-sm sm:max-w-xs">
+                  <span className="text-xs text-ink-muted">Recurs starting on (optional)</span>
+                  <input
+                    type="date"
+                    value={anchor}
+                    onChange={(e) => setAnchor(e.target.value)}
+                    className={`tabular ${inputClass}`}
+                  />
+                </label>
+              )}
+              <SchedulePreview
+                type={recurring}
+                anchor={usesAnchor(recurring) ? parseDateInput(anchor) : null}
+              />
+            </div>
+          )}
         </div>
       </div>
 

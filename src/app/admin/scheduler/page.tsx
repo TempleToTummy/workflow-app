@@ -8,6 +8,7 @@ import {
   lastSuccessfulRun,
 } from "@/lib/scheduler";
 import { currentPeriodName, isPeriodBefore } from "@/lib/periods";
+import { effectiveAnchor } from "@/lib/period-names";
 
 // Work Generation — the operational view of the scheduled job that opens each
 // engagement's accounting periods. Before this existed, the next period was
@@ -60,7 +61,8 @@ export default async function SchedulerPage() {
     .filter((a) => {
       const type = a.project.recurring.type;
       if (type === "ONE_TIME" || !a.currentPeriod) return false;
-      return isPeriodBefore(type, a.currentPeriod, currentPeriodName(type, now));
+      const anchor = effectiveAnchor(a.project.recurrenceAnchor, a.recurrenceAnchor);
+      return isPeriodBefore(type, a.currentPeriod, currentPeriodName(type, now, anchor));
     })
     .map((a) => ({
       key: `${a.clientId}:${a.projectId}`,
@@ -69,7 +71,11 @@ export default async function SchedulerPage() {
       clientName: a.client.companyName,
       projectName: a.project.name,
       parkedIn: a.currentPeriod!,
-      shouldBe: currentPeriodName(a.project.recurring.type, now),
+      shouldBe: currentPeriodName(
+        a.project.recurring.type,
+        now,
+        effectiveAnchor(a.project.recurrenceAnchor, a.recurrenceAnchor)
+      ),
       reason:
         a.project._count.subtasks === 0
           ? "This service has no checklist steps yet."

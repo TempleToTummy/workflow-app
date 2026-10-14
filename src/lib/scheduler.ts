@@ -2,10 +2,12 @@ import { prisma } from "@/lib/prisma";
 import {
   currentPeriodName,
   nextPeriodName,
+  firstPeriodName,
   resolvePeriod,
   isPeriodBefore,
   periodRangeForName,
 } from "@/lib/periods";
+import { effectiveAnchor, formatPeriodName } from "@/lib/period-names";
 import { resolveStepDueDates } from "@/lib/due-dates";
 import { resolveDefaultAssignees } from "@/lib/default-assignees";
 import { recordAudit, AUDIT, SYSTEM_ACTOR } from "@/lib/audit";
@@ -88,6 +90,14 @@ export async function openPeriodForAssignment(input: {
   // The engagement's default assignee, so a generated period arrives already
   // assigned instead of blank. Undefined means "look it up".
   engagementDefaultAssigneeId?: string | null;
+  // The project's owner — the employee who handles this kind of work — used
+  // for every step neither a step default nor the engagement names. Undefined
+  // means "look it up".
+  projectOwnerId?: string | null;
+  // Generate only these steps (adding a newly inserted step to a period that's
+  // already under way). Omitted = every step the period is missing.
+  onlySubTaskIds?: string[];
+
   // Who to credit in the audit log. Defaults to the system (cron).
   actor?: { id: string | null; label: string };
 }): Promise<{ periodCreated: boolean; activitiesCreated: number }> {
@@ -119,6 +129,13 @@ export async function openPeriodForAssignment(input: {
     ? assignment?.defaultAssigneeId ?? null
     : input.engagementDefaultAssigneeId ?? null;
 
+  const projectOwnerId =
+    input.projectOwnerId !== undefined
+      ? input.projectOwnerId
+      : (
+          await prisma.project.findUnique({ where: { id: projectId }, select: { ownerId: true } })
+        )?.ownerId ?? null;
+
   const existingPeriod = await prisma.accountingPeriod.findUnique({
     where: { name: periodName },
   });
@@ -141,7 +158,8 @@ export async function openPeriodForAssignment(input: {
     select: { subTaskId: true },
   });
   const have = new Set(already.map((a) => a.subTaskId));
-  const missing = taskMaps.filter((tm) => !have.has(tm.subTaskId));
+  const only = input.onlySubTaskIds ? new Set(input.onlySubTaskIds) : null;
+  const missing = taskMaps.filter((tm) => !have.has(tm.subTaskId) && (!only || only.has(tm.subTaskId)));
   if (missing.length === 0) {
     return { periodCreated: !existingPeriod, activitiesCreated: 0 };
   }
@@ -152,6 +170,7 @@ export async function openPeriodForAssignment(input: {
       defaultAssigneeId: tm.defaultAssigneeId,
     })),
     engagementDefaultId: engagementDefaultAssigneeId,
+    projectOwnerId,
   });
 
   const dueDates = resolveStepDueDates({
@@ -189,7 +208,9 @@ export async function openPeriodForAssignment(input: {
     entityId: `${clientId}:${projectId}`,
     action: AUDIT.PERIOD_OPENED,
     summary:
-      `Opened ${periodName} with ${missing.length} task${missing.length === 1 ? "" : "s"}` +
+      (only
+        ? `Added ${missing.length} new checklist step${missing.length === 1 ? "" : "s"} to ${formatPeriodName(periodName)}`
+        : `Opened ${formatPeriodName(periodName)} with ${missing.length} task${missing.length === 1 ? "" : "s"}`) +
       (assignedCount > 0 ? `, ${assignedCount} pre-assigned from defaults` : ""),
     toValue: periodName,
     clientId,
@@ -264,8 +285,11 @@ export async function generatePeriods(options: {
         continue;
       }
 
-      const target = currentPeriodName(type, now);
-      let cursor = assignment.currentPeriod ?? target;
+      // Each engagement walks its own schedule: the client's start date if it
+      // has one, else the project's, else the calendar.
+      const anchor = effectiveAnchor(project.recurrenceAnchor, assignment.recurrenceAnchor);
+      const target = currentPeriodName(type, now, anchor);
+      let cursor = assignment.currentPeriod ?? firstPeriodName(type, now, anchor);
 
       // A period name we can't place on a calendar would make the walk below
       // non-terminating; bail on this engagement rather than the whole run.
@@ -282,7 +306,7 @@ export async function generatePeriods(options: {
       let guard = 0;
       while (isPeriodBefore(type, cursor, target)) {
         if (guard++ >= MAX_CATCHUP_PERIODS) break;
-        const next = nextPeriodName(type, cursor);
+        const next = nextPeriodName(type, cursor, anchor);
         if (!next) break;
         cursor = next;
         toOpen.push(cursor);
@@ -308,6 +332,7 @@ export async function generatePeriods(options: {
           },
           clientOverride: assignment.dueOffsetDays,
           engagementDefaultAssigneeId: assignment.defaultAssigneeId,
+          projectOwnerId: project.ownerId,
         });
         if (result.periodCreated) periodsCreated += 1;
         createdHere += result.activitiesCreated;

@@ -16,6 +16,10 @@ export type TaskRow = {
   projectId: string;
   clientName: string;
   projectName: string;
+  // Which period the task belongs to, shown when it isn't the current one so
+  // two open periods of the same project can't be confused.
+  periodLabel: string | null;
+  href: string;
   step: string;
   status: ActivityStatus;
   assigneeName: string;
@@ -173,10 +177,15 @@ export function TasksTable({
                   />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-middle text-ink-muted">{r.clientName}</td>
-                <td className="whitespace-nowrap px-4 py-3 align-middle text-ink-muted">{r.projectName}</td>
+                <td className="whitespace-nowrap px-4 py-3 align-middle text-ink-muted">
+                  {r.projectName}
+                  {r.periodLabel && (
+                    <span className="tabular block text-[11px] text-[var(--status-review)]">{r.periodLabel}</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 align-middle">
                   <Link
-                    href={`/assignments/${r.clientId}/${r.projectId}`}
+                    href={r.href}
                     className="font-medium text-ink hover:text-accent"
                   >
                     {r.step}

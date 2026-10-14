@@ -34,6 +34,9 @@ export type ChecklistTask = {
   // Who normally does this step, across every client on this project. Wins
   // over the engagement's default owner — it expresses a role, not ownership.
   defaultAssigneeId: string | null;
+  // The shared "Completed Y/N" step every project ends with. Always last; it
+  // can't be dragged, renamed here or removed.
+  universal: boolean;
 };
 
 export type BuilderEmployee = { id: string; name: string };
@@ -82,6 +85,10 @@ export function ProjectChecklistBuilder({
   }
 
   const [newName, setNewName] = useState("");
+  // Inserting between two steps: the 1-based number the new step will take.
+  const [insertAt, setInsertAt] = useState<number | null>(null);
+  const [insertName, setInsertName] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
 
@@ -91,7 +98,9 @@ export function ProjectChecklistBuilder({
 
   const busy = isPending || drag !== null;
 
-  function commitOrder(next: ChecklistTask[]) {
+  function commitOrder(attempt: ChecklistTask[]) {
+    // The universal final step can't be dragged above anything.
+    const next = [...attempt.filter((t) => !t.universal), ...attempt.filter((t) => t.universal)];
     setOrder(next);
     setError(null);
     startTransition(async () => {
@@ -111,7 +120,7 @@ export function ProjectChecklistBuilder({
   // --- drag -------------------------------------------------------------
 
   function onHandlePointerDown(e: React.PointerEvent<HTMLButtonElement>, index: number) {
-    if (busy || e.button !== 0) return;
+    if (busy || e.button !== 0 || order[index]?.universal) return;
     const items = Array.from(
       listRef.current?.querySelectorAll<HTMLElement>("[data-task-row]") ?? []
     );
@@ -159,7 +168,7 @@ export function ProjectChecklistBuilder({
     if (!delta) return;
     e.preventDefault();
     const to = index + delta;
-    if (to < 0 || to >= order.length) return;
+    if (to < 0 || to >= order.length || order[index].universal || order[to].universal) return;
     commitOrder(moveItem(order, index, to));
   }
 
@@ -181,20 +190,116 @@ export function ProjectChecklistBuilder({
 
   // --- add / rename / remove --------------------------------------------
 
+  function describeAdded(r: { position: number; addedToOpenPeriods: number; skippedOpenPeriods: number }) {
+    const parts = [`Added as step ${r.position}.`];
+    if (r.addedToOpenPeriods > 0) {
+      parts.push(
+        `Also added to ${r.addedToOpenPeriods} client period${r.addedToOpenPeriods === 1 ? "" : "s"} in progress.`
+      );
+    }
+    if (r.skippedOpenPeriods > 0) {
+      parts.push(
+        `${r.skippedOpenPeriods} period${r.skippedOpenPeriods === 1 ? " was" : "s were"} already past this point, so ${
+          r.skippedOpenPeriods === 1 ? "it gets" : "they get"
+        } the step from the next period.`
+      );
+    }
+    return parts.join(" ");
+  }
+
+  function addAt(name: string, position: number | undefined, onFail: () => void) {
+    setError(null);
+    setNotice(null);
+    startTransition(async () => {
+      try {
+        const result = await addChecklistTask(projectId, name, position);
+        setNotice(describeAdded(result));
+        router.refresh();
+      } catch (err) {
+        onFail();
+        setError(err instanceof Error ? err.message : "Couldn't add task.");
+      }
+    });
+  }
+
   function handleAdd() {
     const name = newName.trim();
     if (!name || busy) return;
     setNewName("");
-    setError(null);
-    startTransition(async () => {
-      try {
-        await addChecklistTask(projectId, name);
-        router.refresh();
-      } catch (err) {
-        setNewName(name);
-        setError(err instanceof Error ? err.message : "Couldn't add task.");
-      }
+    addAt(name, undefined, () => setNewName(name));
+  }
+
+  function handleInsert() {
+    const name = insertName.trim();
+    if (!name || busy || insertAt === null) return;
+    const at = insertAt;
+    setInsertAt(null);
+    setInsertName("");
+    addAt(name, at, () => {
+      setInsertAt(at);
+      setInsertName(name);
     });
+  }
+
+  // The "insert here" control between two rows, or the inline input once
+  // it's been clicked. `position` is the number the new step will take.
+  function insertSlot(position: number) {
+    if (drag) return null;
+    if (insertAt === position) {
+      return (
+        <li key={`insert-${position}`} className="flex items-center gap-2 rounded-md bg-accent-soft/50 px-2 py-1.5">
+          <span className="tabular flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs text-white">
+            {position}
+          </span>
+          <input
+            autoFocus
+            value={insertName}
+            onChange={(e) => setInsertName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleInsert();
+              } else if (e.key === "Escape") {
+                setInsertAt(null);
+              }
+            }}
+            placeholder={`New step ${position} — the steps below move down one`}
+            className={`min-w-0 flex-1 ${inputClass}`}
+          />
+          <button
+            type="button"
+            onClick={handleInsert}
+            disabled={busy || !insertName.trim()}
+            className="shrink-0 rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Insert
+          </button>
+          <button type="button" onClick={() => setInsertAt(null)} className="shrink-0 text-xs text-ink-muted hover:text-ink">
+            Cancel
+          </button>
+        </li>
+      );
+    }
+    return (
+      <li key={`slot-${position}`} aria-hidden={busy} className="group/slot relative -my-1 h-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setInsertAt(position);
+            setInsertName("");
+          }}
+          className="absolute inset-x-8 top-1/2 z-[1] flex -translate-y-1/2 items-center gap-2 opacity-0 transition-opacity focus:opacity-100 group-hover/slot:opacity-100 disabled:hidden"
+          aria-label={`Insert a new step ${position} here`}
+        >
+          <span className="h-px flex-1 bg-accent/50" />
+          <span className="rounded-full border border-accent/50 bg-surface px-2 py-0.5 text-[10px] font-medium text-accent">
+            + Insert step {position}
+          </span>
+          <span className="h-px flex-1 bg-accent/50" />
+        </button>
+      </li>
+    );
   }
 
   function startRename(task: ChecklistTask) {
@@ -274,9 +379,9 @@ export function ProjectChecklistBuilder({
         <div>
           <h2 className="text-sm font-semibold text-ink">Tasks</h2>
           <p className="text-xs text-ink-muted">
-            Drag the handle to reorder. This order becomes the checklist for every client on
-            this project. The owner and deadline on each step are applied when a new period
-            is generated.
+            Drag the handle to reorder, or hover between two steps to insert one there. This
+            order becomes the checklist for every client on this project. Every project ends with
+            the shared &ldquo;Completed Y/N&rdquo; step.
           </p>
         </div>
         <span className="tabular shrink-0 whitespace-nowrap text-xs text-ink-muted">
@@ -285,10 +390,11 @@ export function ProjectChecklistBuilder({
       </div>
 
       <ol ref={listRef} className="flex flex-col p-2">
-        {order.map((task, j) => {
+        {order.flatMap((task, j) => {
           const isDragging = drag?.index === j;
           const isEditing = editingId === task.subTaskId;
-          return (
+          return [
+            insertSlot(j + 1),
             <li
               key={task.subTaskId}
               data-task-row
@@ -299,6 +405,17 @@ export function ProjectChecklistBuilder({
                   : "hover:bg-black/[0.02]"
               }`}
             >
+              {task.universal ? (
+                <span
+                  title="The shared final step. It always stays last."
+                  className="flex h-7 w-6 shrink-0 items-center justify-center text-ink-muted/60"
+                >
+                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                    <rect x="3.5" y="7" width="9" height="6.5" rx="1.2" />
+                    <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+                  </svg>
+                </span>
+              ) : (
               <button
                 type="button"
                 aria-label={`Reorder "${task.name}". Drag, or use the arrow keys.`}
@@ -322,12 +439,23 @@ export function ProjectChecklistBuilder({
                   <circle cx="10.5" cy="12.5" r="1.3" />
                 </svg>
               </button>
+              )}
 
               <span className="tabular flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/5 text-xs text-ink-muted">
                 {j + 1}
               </span>
 
-              {isEditing ? (
+              {task.universal ? (
+                <span className="flex min-w-0 flex-1 items-center gap-2 px-1 py-1 text-sm text-ink">
+                  <span className="truncate">{task.name}</span>
+                  <span
+                    title="One shared step that every project ends with. Rename it for all projects on Admin → Projects Task."
+                    className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                  >
+                    Every project
+                  </span>
+                </span>
+              ) : isEditing ? (
                 <input
                   autoFocus
                   value={editName}
@@ -386,7 +514,9 @@ export function ProjectChecklistBuilder({
                 onSave={(offset) => handleOffset(task, offset)}
               />
 
-              {task.inUse ? (
+              {task.universal ? (
+                <span className="w-5 shrink-0" aria-hidden />
+              ) : task.inUse ? (
                 <span
                   title="Clients already have activity on this step, so it can't be removed."
                   className="shrink-0 rounded-full bg-black/5 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted"
@@ -404,8 +534,8 @@ export function ProjectChecklistBuilder({
                   ×
                 </button>
               )}
-            </li>
-          );
+            </li>,
+          ];
         })}
         {order.length === 0 && (
           <li className="rounded-md border border-dashed border-line px-3 py-8 text-center text-sm text-ink-muted">
@@ -437,6 +567,7 @@ export function ProjectChecklistBuilder({
           {isPending ? "Saving…" : "Add task"}
         </button>
       </div>
+      {notice && <p className="px-4 pb-3 text-xs text-accent">{notice}</p>}
       {error && <p className="px-4 pb-3 text-xs text-overdue">{error}</p>}
     </div>
   );

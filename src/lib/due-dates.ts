@@ -102,8 +102,12 @@ export function resolveStepDueDates(input: {
 // --- Human-readable rules --------------------------------------------------
 
 const CADENCE_NOUN: Record<RecurringType, string> = {
+  WEEKLY: "week",
+  BIWEEKLY: "two-week period",
+  SEMI_MONTHLY: "half-month",
   MONTHLY: "month",
   QUARTERLY: "quarter",
+  SEMI_ANNUAL: "six-month period",
   ANNUAL: "year",
   ONE_TIME: "period",
 };
@@ -135,8 +139,23 @@ export function describeStepOffset(offsetDays: number | null): string {
 // project isn't silently "due on the last day of the period" for cadences
 // where that's obviously wrong.
 export const SUGGESTED_OFFSETS: Record<RecurringType, number> = {
+  WEEKLY: 3,
+  BIWEEKLY: 3,
+  SEMI_MONTHLY: 5,
   MONTHLY: 15,
   QUARTERLY: 30,
+  SEMI_ANNUAL: 30,
   ANNUAL: 75,
   ONE_TIME: 30,
 };
+
+// Answers the question everyone asks when they push a due date out: does the
+// next period start from the due date? No — it starts when this one ENDS.
+// Shown under every due-date rule so the two dates can't be confused.
+export function describeRecurrenceVsDue(offsetDays: number, recurring: RecurringType): string | null {
+  if (recurring === "ONE_TIME") return null;
+  const noun = CADENCE_NOUN[recurring];
+  const n = clampOffset(offsetDays);
+  if (n <= 0) return `The next ${noun} starts the day after this one ends.`;
+  return `The next ${noun} still starts the day after this one ends, not on the due date, so the two overlap for ${n} day${n === 1 ? "" : "s"}.`;
+}

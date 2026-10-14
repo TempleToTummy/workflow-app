@@ -12,6 +12,7 @@ import {
   type ClientFormInput,
   type ContactInput,
 } from "@/lib/actions";
+import { RECURRING_LABELS } from "@/lib/period-names";
 
 type Lookup = { id: string; name: string };
 
@@ -36,13 +37,6 @@ type DraftContact = {
   mobile: string;
   email: string;
   note: string;
-};
-
-const RECURRING_LABELS: Record<string, string> = {
-  MONTHLY: "Monthly",
-  QUARTERLY: "Quarterly",
-  ANNUAL: "Every Year",
-  ONE_TIME: "One time only",
 };
 
 export type ServiceOption = {
@@ -544,7 +538,7 @@ export function ClientForm({
                 <span>
                   <span className="block font-medium text-ink">{s.name}</span>
                   <span className="block text-xs text-ink-muted">
-                    {RECURRING_LABELS[s.recurring] ?? s.recurring}
+                    {RECURRING_LABELS[s.recurring as keyof typeof RECURRING_LABELS] ?? s.recurring}
                     {canManageServices && disabled && " · checklist not configured yet"}
                   </span>
                 </span>

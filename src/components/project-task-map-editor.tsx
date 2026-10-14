@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { addProjectTaskMap, removeProjectTaskMap } from "@/lib/actions";
 
-type Step = { subTaskId: string; name: string; sequence: number };
+type Step = { subTaskId: string; name: string; sequence: number; universal: boolean };
 type SubTaskOption = { id: string; name: string };
 
 const inputClass =
@@ -23,9 +23,10 @@ export function ProjectTaskMapEditor({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [subTaskId, setSubTaskId] = useState("");
-  const [sequence, setSequence] = useState(
-    String((steps[steps.length - 1]?.sequence ?? 0) + 10)
-  );
+  // The step number the new task will take. Defaults to the end of the list
+  // (just above the universal final step); type 5 to insert between 4 and 5.
+  const lastPosition = steps.filter((s) => !s.universal).length + 1;
+  const [sequence, setSequence] = useState(String(lastPosition));
 
   const usedIds = new Set(steps.map((s) => s.subTaskId));
   const choices = availableSubtasks.filter((t) => !usedIds.has(t.id));
@@ -36,8 +37,9 @@ export function ProjectTaskMapEditor({
     if (!subTaskId) return;
     startTransition(async () => {
       try {
-        await addProjectTaskMap(projectId, subTaskId, Number(sequence) || 0);
+        await addProjectTaskMap(projectId, subTaskId, Number(sequence) || lastPosition);
         setSubTaskId("");
+        setSequence(String(lastPosition + 1));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't add step.");
       }
@@ -68,13 +70,17 @@ export function ProjectTaskMapEditor({
               <span className="tabular mr-2 text-xs text-ink-muted">{s.sequence}</span>
               {s.name}
             </span>
-            <button
-              onClick={() => handleRemove(s.subTaskId)}
-              disabled={isPending}
-              className="text-xs text-ink-muted hover:text-overdue disabled:opacity-50"
-            >
-              Remove
-            </button>
+            {s.universal ? (
+              <span className="text-[10px] font-medium text-accent">Every project</span>
+            ) : (
+              <button
+                onClick={() => handleRemove(s.subTaskId)}
+                disabled={isPending}
+                className="text-xs text-ink-muted hover:text-overdue disabled:opacity-50"
+              >
+                Remove
+              </button>
+            )}
           </li>
         ))}
         {steps.length === 0 && (
@@ -97,13 +103,18 @@ export function ProjectTaskMapEditor({
             </option>
           ))}
         </select>
-        <input
-          type="number"
-          value={sequence}
-          onChange={(e) => setSequence(e.target.value)}
-          className={`w-20 ${inputClass}`}
-          aria-label="Sequence"
-        />
+        <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+          as step
+          <input
+            type="number"
+            min={1}
+            max={lastPosition}
+            value={sequence}
+            onChange={(e) => setSequence(e.target.value)}
+            className={`w-16 ${inputClass}`}
+            aria-label="Step number. Later steps move down one."
+          />
+        </label>
         <button
           type="submit"
           disabled={isPending || !subTaskId}

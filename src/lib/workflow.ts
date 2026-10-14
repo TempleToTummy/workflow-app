@@ -31,3 +31,18 @@ export function canMarkDone(
     .filter((a) => a.taskSeqNo < target.taskSeqNo)
     .every((a) => a.status === "DONE");
 }
+
+// Which periods of an engagement are "in play": the current one, plus any
+// earlier period that still has unfinished work. Two periods of the same
+// project can be in play at once — November's bookkeeping starts while
+// October's review isn't signed off — and both belong on the Tasks list and
+// the engagement page, not just the newest.
+export function periodsInPlay(
+  rows: { periodName: string; status: ActivityStatus }[],
+  currentPeriod: string | null
+): Set<string> {
+  const inPlay = new Set<string>();
+  if (currentPeriod) inPlay.add(currentPeriod);
+  for (const r of rows) if (r.status !== "DONE") inPlay.add(r.periodName);
+  return inPlay;
+}

@@ -7,6 +7,8 @@ import { requireUser, assigneeScope } from "@/lib/auth";
 import { clientGroupNames, visibleTags, savedViewsFor } from "@/lib/client-options";
 import { matchesClientFilters } from "@/lib/client-filters";
 import type { ActivityStatus } from "@prisma/client";
+import { periodsInPlay } from "@/lib/workflow";
+import { formatPeriodName } from "@/lib/period-names";
 
 export default async function TasksPage({
   searchParams,
@@ -57,10 +59,21 @@ export default async function TasksPage({
     savedViewsFor(user, "/tasks"),
   ]);
 
-  // Only tasks in each active assignment's *current* period.
-  const currentKey = new Set(
-    assignments.map((a) => `${a.clientId}:${a.projectId}:${a.currentPeriod}`)
-  );
+  // Tasks in every period that's in play for each active assignment: the
+  // current one, plus earlier ones that still have unfinished work (two
+  // periods of the same project can run at once).
+  const currentPeriodOf = new Map(assignments.map((a) => [`${a.clientId}:${a.projectId}`, a.currentPeriod]));
+  const rowsByEngagement = new Map<string, typeof activities>();
+  for (const a of activities) {
+    const k = `${a.clientId}:${a.projectId}`;
+    const list = rowsByEngagement.get(k);
+    if (list) list.push(a);
+    else rowsByEngagement.set(k, [a]);
+  }
+  const currentKey = new Set<string>();
+  for (const [k, current] of currentPeriodOf) {
+    for (const p of periodsInPlay(rowsByEngagement.get(k) ?? [], current)) currentKey.add(`${k}:${p}`);
+  }
   const periodByName = new Map(periods.map((p) => [p.name, p]));
   // Each step carries its own resolved deadline (project rule → client
   // override → step milestone), so two steps in the same period can
@@ -97,6 +110,14 @@ export default async function TasksPage({
         projectId: a.projectId,
         clientName: a.client.companyName,
         projectName: a.project.name,
+        periodLabel:
+          currentPeriodOf.get(`${a.clientId}:${a.projectId}`) === a.periodName
+            ? null
+            : `${formatPeriodName(a.periodName)} · still open`,
+        href:
+          currentPeriodOf.get(`${a.clientId}:${a.projectId}`) === a.periodName
+            ? `/assignments/${a.clientId}/${a.projectId}`
+            : `/assignments/${a.clientId}/${a.projectId}?period=${encodeURIComponent(a.periodName)}`,
         step: a.subTask.name,
         status: a.status,
         assigneeName: a.assignee ? `${a.assignee.firstName} ${a.assignee.lastName}` : "Unassigned",
@@ -123,8 +144,8 @@ export default async function TasksPage({
           <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
           <p className="mt-1 text-sm text-ink-muted">
             {mine
-              ? "Every checklist step assigned to you this period."
-              : "Every checklist step in play across all clients this period."}
+              ? "Every checklist step assigned to you that's in play — this period, and any earlier period still open."
+              : "Every checklist step in play across all clients — this period, and any earlier period still open."}
           </p>
         </div>
         <SavedViewsMenu path="/tasks" views={views} isAdmin={user.role === "ADMIN"} />

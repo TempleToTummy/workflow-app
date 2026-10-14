@@ -5,13 +5,17 @@
 // month. The bulk-assign panel on the assignment page was a workaround for
 // exactly that.
 //
-// Two layers, and the precedence between them is the whole design decision:
+// Three layers, and the precedence between them is the whole design decision:
 //
 //   ProjectTaskMap.defaultAssigneeId    — "Reviewer Layer 2 is always Marcus"
 //   ProjectClientMap.defaultAssigneeId  — "Priya owns Bluepoint's bookkeeping"
+//   Project.ownerId                     — "Priya does our bookkeeping"
 //
 // The STEP default wins where it is set; the ENGAGEMENT default fills in
-// everything else. The step default expresses a role or a skill — the person
+// everything else for that one client; the PROJECT owner (set from the
+// employee's edit page) covers every client nobody has said otherwise for —
+// which is what makes a newly assigned project arrive fully assigned with no
+// per-task clicking. The step default expresses a role or a skill — the person
 // who does second review is the person who does second review, regardless of
 // whose client it is — while the engagement default is the catch-all owner.
 // Resolving it the other way round would let a client owner silently take over
@@ -32,10 +36,11 @@ export type StepDefault = { subTaskId: string; defaultAssigneeId: string | null 
 export function resolveDefaultAssignees(input: {
   steps: StepDefault[];
   engagementDefaultId: string | null | undefined;
+  projectOwnerId?: string | null;
 }): Map<string, string> {
   const resolved = new Map<string, string>();
   for (const step of input.steps) {
-    const who = step.defaultAssigneeId ?? input.engagementDefaultId ?? null;
+    const who = step.defaultAssigneeId ?? input.engagementDefaultId ?? input.projectOwnerId ?? null;
     if (who) resolved.set(step.subTaskId, who);
   }
   return resolved;
@@ -46,9 +51,11 @@ export function resolveDefaultAssignees(input: {
 export function describeDefaultSource(
   stepDefaultId: string | null,
   engagementDefaultId: string | null,
-  nameOf: (id: string) => string | undefined
+  nameOf: (id: string) => string | undefined,
+  projectOwnerId: string | null = null
 ): string {
   if (stepDefaultId) return `Always ${nameOf(stepDefaultId) ?? "someone"}`;
   if (engagementDefaultId) return `${nameOf(engagementDefaultId) ?? "Engagement owner"} (engagement)`;
+  if (projectOwnerId) return `${nameOf(projectOwnerId) ?? "Project owner"} (project owner)`;
   return "Unassigned";
 }

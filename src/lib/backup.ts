@@ -155,7 +155,7 @@ export async function restoreBackup(
         }
         for (const table of BACKUP_TABLES) {
           currentTable = table;
-          const rows = orderRowsForInsert(table, upgradeRows(table, backup.tables[table], backup.version));
+          const rows = orderRowsForInsert(table, upgradeRows(table, backup.tables[table] ?? [], backup.version));
           // Chunked: SQLite caps the number of bound parameters per statement.
           for (let i = 0; i < rows.length; i += 200) {
             await delegate(tx, table).createMany({ data: rows.slice(i, i + 200) });

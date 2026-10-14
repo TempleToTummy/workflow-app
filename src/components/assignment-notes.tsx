@@ -4,8 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   addAssignmentNote,
+  addClientNote,
   deleteAssignmentNote,
+  deleteClientNote,
   updateAssignmentNote,
+  updateClientNote,
 } from "@/lib/actions";
 import { formatDate } from "@/lib/dates";
 
@@ -22,6 +25,15 @@ export type NoteRow = {
 const textareaClass =
   "w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
 
+// Whose notes these are: one engagement (client + project), or the client as
+// a whole. Same panel, same rules; only the actions differ.
+type NoteScope = { kind: "engagement"; clientId: string; projectId: string } | { kind: "client"; clientId: string };
+
+const ACTIONS = {
+  engagement: { update: updateAssignmentNote, remove: deleteAssignmentNote },
+  client: { update: updateClientNote, remove: deleteClientNote },
+};
+
 export function AssignmentNotes({
   clientId,
   projectId,
@@ -30,6 +42,34 @@ export function AssignmentNotes({
   clientId: string;
   projectId: string;
   notes: NoteRow[];
+}) {
+  return <NotesPanel scope={{ kind: "engagement", clientId, projectId }} notes={notes} />;
+}
+
+export function ClientNotes({ clientId, notes }: { clientId: string; notes: NoteRow[] }) {
+  return (
+    <NotesPanel
+      scope={{ kind: "client", clientId }}
+      notes={notes}
+      title="Client notes"
+      hint="Notes about this client as a whole — not one project or task."
+      placeholder="Add a note about this client…"
+    />
+  );
+}
+
+function NotesPanel({
+  scope,
+  notes,
+  title = "Notes",
+  hint,
+  placeholder = "Add a note about this engagement…",
+}: {
+  scope: NoteScope;
+  notes: NoteRow[];
+  title?: string;
+  hint?: string;
+  placeholder?: string;
 }) {
   const router = useRouter();
   const [body, setBody] = useState("");
@@ -42,7 +82,11 @@ export function AssignmentNotes({
     setError(null);
     startTransition(async () => {
       try {
-        await addAssignmentNote(clientId, projectId, { body: trimmed });
+        if (scope.kind === "engagement") {
+          await addAssignmentNote(scope.clientId, scope.projectId, { body: trimmed });
+        } else {
+          await addClientNote(scope.clientId, { body: trimmed });
+        }
         setBody("");
         router.refresh();
       } catch (err) {
@@ -54,8 +98,12 @@ export function AssignmentNotes({
   return (
     <div className="rounded-lg border border-line bg-surface p-6">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
-        Notes
+        {title}
+        {notes.length > 0 && (
+          <span className="count-pill ml-2 bg-black/5 align-middle normal-case tracking-normal">{notes.length}</span>
+        )}
       </h2>
+      {hint && <p className="mt-1 text-sm text-ink-muted">{hint}</p>}
 
       <div className="mt-4">
         <textarea
@@ -63,7 +111,7 @@ export function AssignmentNotes({
           rows={3}
           disabled={isPending}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Add a note about this engagement…"
+          placeholder={placeholder}
           className={textareaClass}
         />
         <div className="mt-2 flex items-center justify-between gap-2">
@@ -82,7 +130,7 @@ export function AssignmentNotes({
 
       <ul className="mt-6 flex flex-col gap-4">
         {notes.map((note) => (
-          <NoteItem key={note.id} note={note} />
+          <NoteItem key={note.id} note={note} actions={ACTIONS[scope.kind]} />
         ))}
         {notes.length === 0 && (
           <li className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
@@ -94,7 +142,13 @@ export function AssignmentNotes({
   );
 }
 
-function NoteItem({ note }: { note: NoteRow }) {
+function NoteItem({
+  note,
+  actions,
+}: {
+  note: NoteRow;
+  actions: (typeof ACTIONS)[keyof typeof ACTIONS];
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note.body);
@@ -107,7 +161,7 @@ function NoteItem({ note }: { note: NoteRow }) {
     setError(null);
     startTransition(async () => {
       try {
-        await updateAssignmentNote(note.id, { body: trimmed });
+        await actions.update(note.id, { body: trimmed });
         setEditing(false);
         router.refresh();
       } catch (err) {
@@ -120,7 +174,7 @@ function NoteItem({ note }: { note: NoteRow }) {
     setError(null);
     startTransition(async () => {
       try {
-        await deleteAssignmentNote(note.id);
+        await actions.remove(note.id);
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't delete.");

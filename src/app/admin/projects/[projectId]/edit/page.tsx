@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { ProjectForm } from "@/components/project-form";
+import { isoDate } from "@/lib/period-names";
 
 export default async function EditProjectPage({
   params,
@@ -32,6 +33,7 @@ export default async function EditProjectPage({
           description: project.description,
           recurring: project.recurring.type,
           dueOffsetDays: project.dueOffsetDays,
+          recurrenceAnchor: project.recurrenceAnchor ? isoDate(project.recurrenceAnchor) : "",
         }}
       />
     </div>
