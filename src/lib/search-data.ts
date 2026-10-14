@@ -3,6 +3,8 @@ import type { CurrentUser } from "@/lib/auth";
 import { messageScope } from "@/lib/email-data";
 import { excerpt, type SearchGroupKey } from "@/lib/search";
 import { maskTaxId, taxIdSearch } from "@/lib/sensitive-fields";
+import { engagementFilter, visibleScope } from "@/lib/access";
+import { engagementHref } from "@/lib/engagements";
 
 // Global search: one query across clients, contacts, services, tasks,
 // comments, notes, files and email. Not a "use server" module — these are
@@ -34,11 +36,13 @@ function like(q: string) {
   return (IS_POSTGRES ? { contains: q, mode: "insensitive" } : { contains: q }) as { contains: string };
 }
 
-function assignmentHref(clientId: string, projectId: string, extra: Record<string, string | null> = {}) {
-  const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
-  const q = p.toString();
-  return `/assignments/${clientId}/${projectId}${q ? `?${q}` : ""}`;
+function assignmentHref(
+  clientId: string,
+  projectId: string,
+  instance: number,
+  extra: { period?: string | null; tab?: string | null } = {}
+) {
+  return engagementHref({ clientId, projectId, instance }, extra);
 }
 
 export async function globalSearch(
@@ -49,19 +53,11 @@ export async function globalSearch(
   const isAdmin = user.role === "ADMIN";
   const take = options.limit;
 
-  // The engagements an employee may see. Admins: no restriction.
-  const mine = isAdmin
-    ? null
-    : await prisma.clientActivity.findMany({
-        where: { assigneeId: user.id },
-        select: { clientId: true, projectId: true },
-        distinct: ["clientId", "projectId"],
-      });
-  const engagementScope = mine
-    ? { OR: mine.length ? mine.map((m) => ({ clientId: m.clientId, projectId: m.projectId })) : [{ id: "__none__" }] }
-    : {};
-  const clientIds = mine ? [...new Set(mine.map((m) => m.clientId))] : null;
-  const clientScope = clientIds ? { id: { in: clientIds } } : {};
+  // The engagements this person is on (src/lib/access.ts). Admins: no
+  // restriction.
+  const scope = await visibleScope(user);
+  const engagementScope = engagementFilter(scope);
+  const clientScope = scope ? { id: { in: [...scope.clientIds] } } : {};
   // Archived clients: hidden from employees, labelled for admins (who may be
   // looking for one to restore).
   const clientVisibility = isAdmin ? {} : { archivedAt: null };
@@ -101,7 +97,7 @@ export async function globalSearch(
     ],
   };
   const projectWhere = {
-    ...(mine ? { id: { in: [...new Set(mine.map((m) => m.projectId))] } } : {}),
+    ...(scope ? { id: { in: [...scope.projectIds] } } : {}),
     OR: [{ name: like(q) }, { description: like(q) }],
   };
   // Tasks: a step's name, or the free-text notes field on it. Current and
@@ -118,7 +114,7 @@ export async function globalSearch(
   const fileWhere = { filename: like(q), ...engagementScope, ...viaClient };
   const emailWhere = {
     AND: [
-      messageScope(user),
+      await messageScope(user),
       {
         OR: [
           { subject: like(q) },
@@ -254,7 +250,7 @@ export async function globalSearch(
         title: a.subTask.name,
         context: `${a.client.companyName} · ${a.project.name} · ${a.periodName}`,
         snippet: a.notes && a.notes.toLowerCase().includes(q.toLowerCase()) ? excerpt(a.notes, q) : null,
-        href: assignmentHref(a.clientId, a.projectId, { period: a.periodName }),
+        href: assignmentHref(a.clientId, a.projectId, a.instance, { period: a.periodName }),
         badge: a.status === "DONE" ? "Done" : a.assignee ? `${a.assignee.firstName} ${a.assignee.lastName}` : "Unassigned",
       })),
     },
@@ -265,7 +261,7 @@ export async function globalSearch(
         title: `${c.authorLabel} on ${c.activity.subTask.name}`,
         context: `${c.activity.client.companyName} · ${c.activity.project.name} · ${c.activity.periodName}`,
         snippet: excerpt(c.body, q),
-        href: assignmentHref(c.activity.clientId, c.activity.projectId, { period: c.activity.periodName }),
+        href: assignmentHref(c.activity.clientId, c.activity.projectId, c.activity.instance, { period: c.activity.periodName }),
         badge: c.createdAt.toLocaleDateString(),
       })),
     },
@@ -278,7 +274,7 @@ export async function globalSearch(
           title: n.author ? `Note by ${n.author.firstName} ${n.author.lastName}` : "Note",
           context: `${n.client.companyName} · ${n.project.name}`,
           snippet: excerpt(n.body, q),
-          href: assignmentHref(n.clientId, n.projectId, { tab: "notes" }),
+          href: assignmentHref(n.clientId, n.projectId, n.instance, { tab: "notes" }),
           badge: n.createdAt.toLocaleDateString(),
         })),
         ...clientNotes.map((n) => ({
@@ -302,7 +298,7 @@ export async function globalSearch(
         title: d.filename,
         context: `${d.client.companyName} · ${d.project.name}${d.periodName ? ` · ${d.periodName}` : ""}`,
         snippet: null,
-        href: assignmentHref(d.clientId, d.projectId, { tab: "files", period: d.periodName }),
+        href: assignmentHref(d.clientId, d.projectId, d.instance, { tab: "files", period: d.periodName }),
         badge: d.createdAt.toLocaleDateString(),
       })),
     },

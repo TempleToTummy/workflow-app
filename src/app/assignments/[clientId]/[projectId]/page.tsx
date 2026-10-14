@@ -25,7 +25,10 @@ import { TimeEntryList, type TimeRow } from "@/components/time-entry-list";
 import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
 import { formatDueDate, formatDate } from "@/lib/dates";
 import { engagementDueDate, effectiveOffset } from "@/lib/due-dates";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canAccessEngagement } from "@/lib/access";
+import { engagementHref, engagementId, engagementLabel, engagementWhere, parseInstance } from "@/lib/engagements";
+import { EngagementTitle } from "@/components/engagement-title";
 import { commentsForActivities, mentionCandidates } from "@/lib/comment-data";
 import {
   listTimeEntries,
@@ -51,34 +54,35 @@ export default async function AssignmentDetailPage({
   searchParams,
 }: {
   params: Promise<{ clientId: string; projectId: string }>;
-  searchParams: Promise<{ tab?: string; period?: string }>;
+  searchParams: Promise<{ tab?: string; period?: string; n?: string }>;
 }) {
   const user = await requireUser();
-  const mine = assigneeScope(user);
   const { clientId, projectId } = await params;
-  const { tab: tabParam, period: periodParam } = await searchParams;
+  const { tab: tabParam, period: periodParam, n } = await searchParams;
+  // Which copy of the project for this client ("Bookkeeping 2" is n=2).
+  const instance = parseInstance(n);
+  const key = { clientId, projectId, instance };
 
-  // Employees can open an engagement only if some step in it (any period)
-  // is assigned to them.
-  if (mine) {
-    const onIt = await prisma.clientActivity.count({
-      where: { clientId, projectId, assigneeId: mine },
-    });
-    if (onIt === 0) redirect("/");
-  }
+  // Project-level access: the engagement's responsible person, or anyone with
+  // a task in it, sees the whole thing (src/lib/access.ts).
+  if (!(await canAccessEngagement(user, clientId, projectId, instance))) redirect("/");
   const tab: AssignmentTab =
     tabParam === "files" || tabParam === "notes" || tabParam === "time" ? tabParam : "list";
 
   const assignment = await prisma.projectClientMap.findUnique({
-    where: { clientId_projectId: { clientId, projectId } },
-    include: { client: true, project: { include: { recurring: true, owner: true } } },
+    where: engagementId(key),
+    include: {
+      client: true,
+      project: { include: { recurring: true, owner: true } },
+      defaultAssignee: true,
+    },
   });
 
   if (!assignment) notFound();
 
   // Every period this engagement has ever had task rows in, newest first.
   const historyRows = await prisma.clientActivity.findMany({
-    where: { clientId, projectId },
+    where: engagementWhere(key),
     select: { periodName: true, status: true },
   });
   const knownPeriods = new Set(historyRows.map((r) => r.periodName));
@@ -90,7 +94,7 @@ export default async function AssignmentDetailPage({
 
   const [activities, periodRecords, employees, documents, notes, stepDefaultCount] = await Promise.all([
     prisma.clientActivity.findMany({
-      where: { clientId, projectId, periodName: periodName ?? undefined },
+      where: { ...engagementWhere(key), periodName: periodName ?? undefined },
       include: {
         subTask: true,
         assignee: true,
@@ -103,8 +107,7 @@ export default async function AssignmentDetailPage({
     prisma.employee.findMany({ orderBy: [{ firstName: "asc" }, { lastName: "asc" }] }),
     prisma.document.findMany({
       where: {
-        clientId,
-        projectId,
+        ...engagementWhere(key),
         // Legacy uploads with no period recorded stay visible on the current
         // period only, so nothing silently disappears.
         ...(periodName
@@ -117,7 +120,7 @@ export default async function AssignmentDetailPage({
       orderBy: { createdAt: "desc" },
     }),
     prisma.assignmentNote.findMany({
-      where: { clientId, projectId },
+      where: engagementWhere(key),
       include: { author: true },
       orderBy: { createdAt: "desc" },
     }),
@@ -142,9 +145,9 @@ export default async function AssignmentDetailPage({
     loggedMinutesByActivity(activityIds),
     mentionCandidates(),
     runningTimer(user.id),
-    requestsForEngagement({ clientId, projectId, periodName }),
+    requestsForEngagement({ clientId, projectId, instance, periodName }),
     bestContactFor(clientId),
-    listTimeEntries({ clientId, projectId, periodName }),
+    listTimeEntries({ clientId, projectId, instance, periodName }),
   ]);
 
   const scope = timeScope(user);
@@ -181,6 +184,9 @@ export default async function AssignmentDetailPage({
     .sort((a, b) => b.start - a.start || b.name.localeCompare(a.name));
 
   const basePath = `/assignments/${clientId}/${projectId}`;
+  const hrefFor = (period?: string | null) => engagementHref(key, { period });
+  const label = engagementLabel(assignment.project.name, assignment.name, instance);
+  const responsible = assignment.defaultAssignee ?? assignment.project.owner ?? null;
 
   // Earlier periods that still have unfinished work: they run alongside the
   // current one until they're done, and the page says so.
@@ -258,13 +264,20 @@ export default async function AssignmentDetailPage({
 
       <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {assignment.project.name}
-          </h1>
+          <EngagementTitle
+            clientId={clientId}
+            projectId={projectId}
+            instance={instance}
+            label={label}
+            customName={assignment.name ?? ""}
+            projectName={assignment.project.name}
+          />
           <p className="mt-1 text-sm text-ink-muted">
             <Link href={`/clients/${clientId}`} className="hover:text-accent">
               {assignment.client.companyName}
             </Link>
+            {" · "}
+            {responsible ? `Assigned to ${employeeName(responsible)}` : "No one assigned"}
             {periodName && (
               <>
                 {" · "}
@@ -283,6 +296,7 @@ export default async function AssignmentDetailPage({
             <StartNextPeriod
               clientId={clientId}
               projectId={projectId}
+              instance={instance}
               nextPeriod={startableNext}
               currentDone={completed}
             />
@@ -296,7 +310,7 @@ export default async function AssignmentDetailPage({
           {history.map((h) => {
             const active = h.name === periodName;
             const current = h.name === assignment.currentPeriod;
-            const href = current ? basePath : `${basePath}?period=${encodeURIComponent(h.name)}`;
+            const href = current ? hrefFor() : hrefFor(h.name);
             return (
               <Link
                 key={h.name}
@@ -332,7 +346,7 @@ export default async function AssignmentDetailPage({
             <span key={h.name}>
               {i > 0 && ", "}
               <Link
-                href={`${basePath}?period=${encodeURIComponent(h.name)}`}
+                href={hrefFor(h.name)}
                 className="font-medium text-accent hover:underline"
               >
                 {formatPeriodName(h.name)} ({h.doneCount}/{h.total} done)
@@ -345,7 +359,7 @@ export default async function AssignmentDetailPage({
       {!isCurrent && !completed && periodName && assignment.currentPeriod && (
         <div className="mt-4 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink-muted">
           {formatPeriodName(periodName)} is still open and runs alongside the current period (
-          <Link href={basePath} className="font-medium text-accent hover:underline">
+          <Link href={hrefFor()} className="font-medium text-accent hover:underline">
             {formatPeriodName(assignment.currentPeriod)}
           </Link>
           ). Work it here as normal.
@@ -364,7 +378,7 @@ export default async function AssignmentDetailPage({
               : `${formatPeriodName(periodName ?? "")} is complete. You're viewing its history.`}
           </span>
           {!isCurrent && assignment.currentPeriod && (
-            <Link href={basePath} className="font-medium hover:underline">
+            <Link href={hrefFor()} className="font-medium hover:underline">
               Go to the current period ({formatPeriodName(assignment.currentPeriod)}) →
             </Link>
           )}
@@ -373,6 +387,7 @@ export default async function AssignmentDetailPage({
 
       <AssignmentTabs
         basePath={basePath}
+        instance={instance}
         active={tab}
         period={isCurrent ? null : periodName}
         counts={{
@@ -402,6 +417,7 @@ export default async function AssignmentDetailPage({
             <AssignmentFiles
               clientId={clientId}
               projectId={projectId}
+              instance={instance}
               periodName={periodName}
               documents={documents.map((d) => ({
                 id: d.id,
@@ -473,6 +489,7 @@ export default async function AssignmentDetailPage({
             <AssignmentNotes
               clientId={clientId}
               projectId={projectId}
+              instance={instance}
               notes={notes.map((n) => ({
                 id: n.id,
                 body: n.body,
@@ -488,6 +505,7 @@ export default async function AssignmentDetailPage({
           <AssignmentDuePanel
             clientId={clientId}
             projectId={projectId}
+            instance={instance}
             recurring={assignment.project.recurring.type}
             projectOffset={assignment.project.dueOffsetDays}
             clientOffset={assignment.dueOffsetDays}
@@ -497,6 +515,7 @@ export default async function AssignmentDetailPage({
           <EngagementSchedule
             clientId={clientId}
             projectId={projectId}
+            instance={instance}
             recurring={assignment.project.recurring.type}
             projectAnchor={
               assignment.project.recurrenceAnchor ? isoDate(assignment.project.recurrenceAnchor) : ""
@@ -507,6 +526,7 @@ export default async function AssignmentDetailPage({
           <ClientRequestPanel
             clientId={clientId}
             projectId={projectId}
+            instance={instance}
             periodName={periodName}
             contactEmail={contact?.email ?? null}
             steps={steps.map((s) => ({
@@ -542,6 +562,7 @@ export default async function AssignmentDetailPage({
           <EngagementDefaults
             clientId={clientId}
             projectId={projectId}
+            instance={instance}
             periodName={periodName}
             employees={employeeOptions}
             defaultAssigneeId={assignment.defaultAssigneeId}
@@ -552,6 +573,7 @@ export default async function AssignmentDetailPage({
           <AssigneePanel
             clientId={clientId}
             projectId={projectId}
+            instance={instance}
             periodName={periodName}
             employees={employeeOptions}
             steps={steps.map((s) => ({
@@ -563,6 +585,7 @@ export default async function AssignmentDetailPage({
           <EngagementHistory
             clientId={clientId}
             projectId={projectId}
+            instance={instance}
             periodName={periodName}
           />
         </aside>

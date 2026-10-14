@@ -3,20 +3,17 @@ import type { Role } from "@prisma/client";
 // Who may change what. Pure — no next/*, no Prisma client — so the whole
 // policy is covered by scripts/test-permissions.ts.
 //
-// The app already decided who may SEE what (assigneeScope in auth.ts: admins
-// see the firm, an employee sees engagements with at least one step assigned
-// to them). Before this module, writes only checked "is somebody signed in",
-// so an employee could change any record whose id they could guess or had
-// kept from an earlier assignment. The rule now is that writing needs the
-// same access that reading does, plus a few things only an admin does:
+// Writing needs the same access that reading does (src/lib/access.ts), plus a
+// few things only an admin does:
 //
 //   engagement  Working an engagement: step status, assignees, subtasks,
 //               notes, files, comments, timers, client requests, the
-//               engagement's own deadline override and default owner. Needs a
-//               task on that client + project (any period — the same gate the
-//               assignment page applies, so past periods stay workable).
-//   client      Editing a client's details and contacts. Needs a task
-//               anywhere for that client.
+//               engagement's own deadline override and default owner. Needs
+//               being ON the engagement: its responsible person (the
+//               engagement's owner, else the project's owner) or anyone with
+//               a task in it.
+//   client      Editing a client's details and contacts. Needs being on any
+//               of that client's engagements.
 //   admin       Firm structure: adding, archiving or deleting a client,
 //               turning a service on for a client, and editing a service
 //               template (checklist steps, the service's due rule, step
@@ -30,7 +27,7 @@ export type Capability = "engagement" | "client" | "admin";
 
 export type AccessFacts = {
   role: Role;
-  // Does the user have at least one step assigned on this client + project?
+  // Is the user on this engagement (responsible for it, or has a task in it)?
   onEngagement?: boolean;
   // ...on any of this client's engagements?
   onClient?: boolean;

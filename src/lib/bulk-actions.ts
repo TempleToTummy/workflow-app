@@ -33,11 +33,11 @@ function name(e: { firstName: string; lastName: string } | null): string {
 // one engagement are one access query, not twenty.
 function accessChecker(user: CurrentUser) {
   const cache = new Map<string, Promise<boolean>>();
-  return (clientId: string, projectId: string) => {
-    const key = `${clientId}:${projectId}`;
+  return (clientId: string, projectId: string, instance: number) => {
+    const key = `${clientId}:${projectId}:${instance}`;
     let hit = cache.get(key);
     if (!hit) {
-      hit = canAccessEngagement(user, clientId, projectId);
+      hit = canAccessEngagement(user, clientId, projectId, instance);
       cache.set(key, hit);
     }
     return hit;
@@ -46,13 +46,23 @@ function accessChecker(user: CurrentUser) {
 
 const NO_ACCESS = "Not an engagement you're assigned to.";
 
+// One period of one engagement. NUL-separated: period names never contain it.
+function groupKey(a: { clientId: string; projectId: string; instance: number; periodName: string }): string {
+  return [a.clientId, a.projectId, String(a.instance), a.periodName].join("\u0000");
+}
+
+function parseGroupKey(key: string) {
+  const [clientId, projectId, instance, periodName] = key.split("\u0000");
+  return { clientId, projectId, instance: Number(instance), periodName };
+}
+
 function revalidateBulk(engagements: Iterable<string>) {
   revalidatePath("/");
   revalidatePath("/tasks");
   revalidatePath("/workload");
   revalidatePath("/activity");
   for (const key of engagements) {
-    const [clientId, projectId] = key.split(":");
+    const [clientId, projectId] = key.split("\u0000");
     revalidatePath(`/assignments/${clientId}/${projectId}`);
   }
 }
@@ -71,16 +81,16 @@ export async function bulkUpdateTaskStatus(
 
   const selected = await prisma.clientActivity.findMany({
     where: { id: { in: ids } },
-    select: { id: true, clientId: true, projectId: true, periodName: true },
+    select: { id: true, clientId: true, projectId: true, instance: true, periodName: true },
   });
   const canAccess = accessChecker(user);
   const allowedIds: string[] = [];
   const skipped: BulkResult["skipped"] = [];
   const groupKeys = new Set<string>();
   for (const a of selected) {
-    if (await canAccess(a.clientId, a.projectId)) {
+    if (await canAccess(a.clientId, a.projectId, a.instance)) {
       allowedIds.push(a.id);
-      groupKeys.add(`${a.clientId}:${a.projectId}:${a.periodName}`);
+      groupKeys.add(groupKey(a));
     } else {
       skipped.push({ label: "A task", reason: NO_ACCESS });
     }
@@ -89,10 +99,7 @@ export async function bulkUpdateTaskStatus(
   // Every sibling in every affected period, for the sequential rule.
   const siblings = await prisma.clientActivity.findMany({
     where: {
-      OR: [...groupKeys].map((k) => {
-        const [clientId, projectId, periodName] = k.split(":");
-        return { clientId, projectId, periodName };
-      }),
+      OR: [...groupKeys].map(parseGroupKey),
     },
     include: {
       subTask: { select: { name: true } },
@@ -103,7 +110,7 @@ export async function bulkUpdateTaskStatus(
   const byId = new Map(siblings.map((s) => [s.id, s]));
   const tasks: PlannableTask[] = siblings.map((s) => ({
     id: s.id,
-    groupKey: `${s.clientId}:${s.projectId}:${s.periodName}`,
+    groupKey: groupKey(s),
     taskSeqNo: s.taskSeqNo,
     status: s.status,
     label: s.subTask.name,
@@ -148,6 +155,7 @@ export async function bulkUpdateTaskStatus(
           toValue: newStatus,
           clientId: a.clientId,
           projectId: a.projectId,
+          instance: a.instance,
           periodName: a.periodName,
           contextLabel: `${a.client.companyName} · ${a.project.name}`,
           actor: actorFrom(user),
@@ -158,18 +166,15 @@ export async function bulkUpdateTaskStatus(
     // Finishing a period by bulk rolls it forward exactly like finishing it
     // one step at a time.
     if (newStatus === "DONE") {
-      const finished = new Set(plan.apply.map((id) => {
-        const a = byId.get(id)!;
-        return `${a.clientId}:${a.projectId}:${a.periodName}`;
-      }));
+      const finished = new Set(plan.apply.map((id) => groupKey(byId.get(id)!)));
       for (const key of finished) {
-        const [clientId, projectId, periodName] = key.split(":");
-        await maybeRollPeriodForward(clientId, projectId, periodName);
+        const { clientId, projectId, instance, periodName } = parseGroupKey(key);
+        await maybeRollPeriodForward(clientId, projectId, periodName, instance);
       }
     }
   }
 
-  revalidateBulk([...groupKeys].map((k) => k.split(":").slice(0, 2).join(":")));
+  revalidateBulk([...groupKeys]);
   return { changed: plan.apply.length, unchanged: plan.unchanged.length, skipped };
 }
 
@@ -197,7 +202,7 @@ export async function bulkAssignTasks(activityIds: string[], employeeId: string)
 
 // --- Assignee (dashboard: whole engagement-periods) ---------------------------------
 
-export type EngagementPeriodRef = { clientId: string; projectId: string; periodName: string };
+export type EngagementPeriodRef = { clientId: string; projectId: string; instance?: number; periodName: string };
 
 // Reassigns the OPEN steps of each selected dashboard row. Done steps keep the
 // person who did them — reassigning finished work would rewrite who is
@@ -218,7 +223,12 @@ export async function bulkAssignEngagements(
     where: {
       status: { not: "DONE" },
       ...(options.onlyUnassigned ? { assigneeId: null } : {}),
-      OR: refs.map((r) => ({ clientId: r.clientId, projectId: r.projectId, periodName: r.periodName })),
+      OR: refs.map((r) => ({
+        clientId: r.clientId,
+        projectId: r.projectId,
+        instance: r.instance ?? 1,
+        periodName: r.periodName,
+      })),
     },
     include: {
       subTask: { select: { name: true } },
@@ -234,6 +244,7 @@ type AssignableRow = {
   id: string;
   clientId: string;
   projectId: string;
+  instance: number;
   periodName: string;
   assigneeId: string | null;
   assignee: { firstName: string; lastName: string } | null;
@@ -254,7 +265,7 @@ async function applyAssignee(
 
   const allowed: AssignableRow[] = [];
   for (const r of rows) {
-    if (await canAccess(r.clientId, r.projectId)) allowed.push(r);
+    if (await canAccess(r.clientId, r.projectId, r.instance)) allowed.push(r);
     else skipped.push({ label: `${r.client.companyName} · ${r.subTask.name}`, reason: NO_ACCESS });
   }
   const changing = allowed.filter((r) => r.assigneeId !== assigneeId);
@@ -275,6 +286,7 @@ async function applyAssignee(
         toValue: assigneeId,
         clientId: r.clientId,
         projectId: r.projectId,
+        instance: r.instance,
         periodName: r.periodName,
         contextLabel: `${r.client.companyName} · ${r.project.name}`,
         actor: actorFrom(user),
@@ -282,6 +294,6 @@ async function applyAssignee(
     );
   }
 
-  revalidateBulk(new Set(allowed.map((r) => `${r.clientId}:${r.projectId}`)));
+  revalidateBulk(new Set(allowed.map(groupKey)));
   return { changed: changing.length, unchanged: allowed.length - changing.length, skipped };
 }

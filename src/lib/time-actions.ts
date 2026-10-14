@@ -74,6 +74,7 @@ async function contextForActivity(activityId: string) {
     activityId: activity.id,
     clientId: activity.clientId,
     projectId: activity.projectId,
+    instance: activity.instance,
     periodName: activity.periodName,
     label: `${activity.client.companyName} · ${activity.project.name} · ${activity.subTask.name}`,
     contextLabel: `${activity.client.companyName} · ${activity.project.name}`,
@@ -116,6 +117,7 @@ export async function startTimer(activityId: string): Promise<StartTimerResult> 
       activityId: context.activityId,
       clientId: context.clientId,
       projectId: context.projectId,
+      instance: context.instance,
       periodName: context.periodName,
       startedAt: new Date(),
       endedAt: null,
@@ -186,6 +188,7 @@ async function stopRunningTimerFor(
     toValue: String(minutes),
     clientId: running.clientId,
     projectId: running.projectId,
+    instance: running.instance,
     periodName: running.periodName,
     contextLabel: running.client?.companyName ?? null,
     actor: actorFrom(user),
@@ -221,6 +224,7 @@ export type ManualTimeInput = {
   activityId?: string | null;
   clientId?: string | null;
   projectId?: string | null;
+  instance?: number | null;
   periodName?: string | null;
   minutes: number;
   // yyyy-mm-dd. The work day being recorded, not the moment of typing.
@@ -249,6 +253,7 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
     activityId: string | null;
     clientId: string | null;
     projectId: string | null;
+    instance: number;
     periodName: string | null;
     label: string;
     contextLabel: string | null;
@@ -262,7 +267,7 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
     const resolved = await contextForActivity(input.activityId);
     context = { ...resolved };
   } else if (input.clientId) {
-    if (input.projectId) await requireEngagementAccess(input.clientId, input.projectId);
+    if (input.projectId) await requireEngagementAccess(input.clientId, input.projectId, input.instance ?? 1);
     else await requireClientAccess(input.clientId);
     const client = await prisma.client.findUniqueOrThrow({
       where: { id: input.clientId },
@@ -278,6 +283,7 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
       activityId: null,
       clientId: client.id,
       projectId: project?.id ?? null,
+      instance: input.instance ?? 1,
       periodName: input.periodName?.trim() || null,
       label: project ? `${client.companyName} · ${project.name}` : client.companyName,
       contextLabel: client.companyName,
@@ -290,6 +296,7 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
       activityId: null,
       clientId: null,
       projectId: null,
+      instance: 1,
       periodName: null,
       label: "internal time",
       contextLabel: null,
@@ -310,6 +317,7 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
       activityId: context.activityId,
       clientId: context.clientId,
       projectId: context.projectId,
+      instance: context.instance,
       periodName: context.periodName,
       startedAt,
       endedAt,
@@ -331,6 +339,7 @@ export async function logManualTime(input: ManualTimeInput): Promise<{ id: strin
     toValue: String(minutes),
     clientId: context.clientId,
     projectId: context.projectId,
+    instance: context.instance,
     periodName: context.periodName,
     contextLabel: context.contextLabel,
     actor: actorFrom(user),
@@ -425,6 +434,7 @@ export async function updateTimeEntry(
     toValue: String(minutes),
     clientId: before.clientId,
     projectId: before.projectId,
+    instance: before.instance,
     periodName: before.periodName,
     contextLabel: before.client?.companyName ?? null,
     actor: actorFrom(user),
@@ -451,6 +461,7 @@ export async function deleteTimeEntry(id: string): Promise<void> {
     fromValue: String(before.minutes),
     clientId: before.clientId,
     projectId: before.projectId,
+    instance: before.instance,
     periodName: before.periodName,
     contextLabel: before.client?.companyName ?? null,
     actor: actorFrom(user),

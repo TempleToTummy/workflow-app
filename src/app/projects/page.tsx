@@ -1,35 +1,37 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canSee, visibleScope } from "@/lib/access";
+import { engagementKeyString } from "@/lib/engagements";
 import { describeDueRule } from "@/lib/due-dates";
 import { RECURRING_SHORT_LABELS as RECURRING_LABELS } from "@/lib/period-names";
 
 export default async function ProjectsPage() {
   const user = await requireUser();
-  const mine = assigneeScope(user);
+  const scope = await visibleScope(user);
   const [projects, assignments, activities] = await Promise.all([
     prisma.project.findMany({
       // Employees see only projects they have a task on.
-      where: mine ? { activities: { some: { assigneeId: mine } } } : undefined,
+      where: scope ? { id: { in: [...scope.projectIds] } } : undefined,
       include: { recurring: true, subtasks: true, owner: { select: { firstName: true, lastName: true } } },
       orderBy: { name: "asc" },
     }),
     prisma.projectClientMap.findMany({ where: { active: true, client: { archivedAt: null } } }),
     prisma.clientActivity.findMany({
       where: { client: { archivedAt: null } },
-      select: { projectId: true, clientId: true, periodName: true, status: true },
+      select: { projectId: true, clientId: true, instance: true, periodName: true, status: true },
     }),
   ]);
 
   const rows = projects
     .map((p) => {
-      const projAssignments = assignments.filter((a) => a.projectId === p.id);
+      const projAssignments = assignments.filter((a) => a.projectId === p.id && canSee(scope, a));
       const current = new Set(
-        projAssignments.map((a) => `${a.clientId}:${a.currentPeriod}`)
+        projAssignments.map((a) => `${engagementKeyString(a)}\u0000${a.currentPeriod}`)
       );
       const acts = activities.filter(
         (act) =>
-          act.projectId === p.id && current.has(`${act.clientId}:${act.periodName}`)
+          act.projectId === p.id && current.has(`${engagementKeyString(act)}\u0000${act.periodName}`)
       );
       const done = acts.filter((a) => a.status === "DONE").length;
       return {

@@ -8,6 +8,13 @@ import {
   periodRangeForName,
 } from "@/lib/periods";
 import { effectiveAnchor, formatPeriodName } from "@/lib/period-names";
+import {
+  engagementId,
+  engagementKeyString,
+  engagementLabel,
+  engagementWhere,
+  type EngagementKey,
+} from "@/lib/engagements";
 import { resolveStepDueDates } from "@/lib/due-dates";
 import { resolveDefaultAssignees } from "@/lib/default-assignees";
 import { recordAudit, AUDIT, SYSTEM_ACTOR } from "@/lib/audit";
@@ -78,6 +85,8 @@ const SKIP_LABELS: Record<Skip, string> = {
 export async function openPeriodForAssignment(input: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client. Default 1.
+  instance?: number;
   periodName: string;
   // Supplied by callers that already loaded them, to avoid refetching per
   // engagement inside a batch run.
@@ -102,6 +111,8 @@ export async function openPeriodForAssignment(input: {
   actor?: { id: string | null; label: string };
 }): Promise<{ periodCreated: boolean; activitiesCreated: number }> {
   const { clientId, projectId, periodName } = input;
+  const instance = input.instance ?? 1;
+  const key = { clientId, projectId, instance };
 
   const project =
     input.project ??
@@ -117,7 +128,7 @@ export async function openPeriodForAssignment(input: {
   const assignment =
     needsAssignment || needsOverride
       ? await prisma.projectClientMap.findUnique({
-          where: { clientId_projectId: { clientId, projectId } },
+          where: engagementId(key),
           select: { dueOffsetDays: true, defaultAssigneeId: true },
         })
       : null;
@@ -154,7 +165,7 @@ export async function openPeriodForAssignment(input: {
   // SQLite has no skipDuplicates on createMany, so dedupe explicitly against
   // what's already there. This is what makes the whole job safely re-runnable.
   const already = await prisma.clientActivity.findMany({
-    where: { clientId, projectId, periodName },
+    where: { ...engagementWhere(key), periodName },
     select: { subTaskId: true },
   });
   const have = new Set(already.map((a) => a.subTaskId));
@@ -187,6 +198,7 @@ export async function openPeriodForAssignment(input: {
     data: missing.map((tm) => ({
       clientId,
       projectId,
+      instance,
       subTaskId: tm.subTaskId,
       periodName,
       taskSeqNo: tm.sequence,
@@ -205,7 +217,7 @@ export async function openPeriodForAssignment(input: {
   const assignedCount = missing.filter((tm) => defaultAssignees.has(tm.subTaskId)).length;
   await recordAudit({
     entityType: "ProjectClientMap",
-    entityId: `${clientId}:${projectId}`,
+    entityId: engagementKeyString(key),
     action: AUDIT.PERIOD_OPENED,
     summary:
       (only
@@ -215,6 +227,7 @@ export async function openPeriodForAssignment(input: {
     toValue: periodName,
     clientId,
     projectId,
+    instance,
     periodName,
     actor: input.actor ?? { id: null, label: SYSTEM_ACTOR },
   });
@@ -266,7 +279,8 @@ export async function generatePeriods(options: {
 
     for (const assignment of assignments) {
       engagementsScanned += 1;
-      const { clientId, projectId, project } = assignment;
+      const { clientId, projectId, instance, project } = assignment;
+      const key = { clientId, projectId, instance };
       const type = project.recurring.type;
 
       // A one-time project has no next period — it finishes when its checklist
@@ -276,7 +290,7 @@ export async function generatePeriods(options: {
         // calendar. The completion path closes it, but an admin editing
         // statuses on /admin/client-activity bypasses that path entirely, so
         // sweep for finished-but-still-open one-timers here.
-        if (await closeIfFinished(clientId, projectId)) assignmentsClosed += 1;
+        if (await closeIfFinished(key)) assignmentsClosed += 1;
         else noteSkip("one-time");
         continue;
       }
@@ -314,7 +328,7 @@ export async function generatePeriods(options: {
       if (guard >= MAX_CATCHUP_PERIODS) {
         noteSkip("catchup-limit");
         notes.push(
-          `${assignment.client.companyName} · ${project.name} is more than ${MAX_CATCHUP_PERIODS} periods behind and was left alone.`
+          `${assignment.client.companyName} · ${engagementLabel(project.name, assignment.name, instance)} is more than ${MAX_CATCHUP_PERIODS} periods behind and was left alone.`
         );
         continue;
       }
@@ -324,6 +338,7 @@ export async function generatePeriods(options: {
         const result = await openPeriodForAssignment({
           clientId,
           projectId,
+          instance,
           periodName,
           project: {
             recurringId: project.recurringId,
@@ -345,13 +360,13 @@ export async function generatePeriods(options: {
       const latest = toOpen[toOpen.length - 1];
       if (latest !== assignment.currentPeriod) {
         await prisma.projectClientMap.update({
-          where: { clientId_projectId: { clientId, projectId } },
+          where: engagementId(key),
           data: { currentPeriod: latest },
         });
         engagementsAdvanced += 1;
         if (toOpen.length > 2) {
           notes.push(
-            `${assignment.client.companyName} · ${project.name} was ${toOpen.length - 1} periods behind; opened ${toOpen[0]} → ${latest}.`
+            `${assignment.client.companyName} · ${engagementLabel(project.name, assignment.name, instance)} was ${toOpen.length - 1} periods behind; opened ${toOpen[0]} → ${latest}.`
           );
         }
       }
@@ -437,14 +452,14 @@ function isParseablePeriod(
 
 // Marks a one-time engagement complete once every task it has is done.
 // Returns whether it actually closed one.
-async function closeIfFinished(clientId: string, projectId: string): Promise<boolean> {
+async function closeIfFinished(key: EngagementKey): Promise<boolean> {
   const rows = await prisma.clientActivity.findMany({
-    where: { clientId, projectId },
+    where: engagementWhere(key),
     select: { status: true },
   });
   if (rows.length === 0 || !rows.every((r) => r.status === "DONE")) return false;
   await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     data: { completedDate: new Date(), active: false },
   });
   return true;

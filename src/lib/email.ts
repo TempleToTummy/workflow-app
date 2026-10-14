@@ -205,9 +205,13 @@ export function threadKeyFor(input: {
   clientId?: string | null;
   projectId?: string | null;
   periodName?: string | null;
+  // A second copy of a project threads separately from the first. Instance 1
+  // keeps the original key, so existing threads are unchanged.
+  instance?: number | null;
 }): string {
   if (input.clientId && input.projectId) {
-    return `eng:${input.clientId}:${input.projectId}:${input.periodName ?? "-"}`;
+    const project = (input.instance ?? 1) > 1 ? `${input.projectId}#${input.instance}` : input.projectId;
+    return `eng:${input.clientId}:${project}:${input.periodName ?? "-"}`;
   }
   if (input.clientId) return `client:${input.clientId}`;
   return `misc:${randomBytes(6).toString("hex")}`;

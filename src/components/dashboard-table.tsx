@@ -15,6 +15,7 @@ export type DashboardRow = {
   key: string;
   clientId: string;
   projectId: string;
+  instance: number;
   periodName: string;
   href: string;
   clientName: string;
@@ -66,7 +67,7 @@ export function DashboardTable({
   function assign() {
     const refs = rows
       .filter((r) => sel.isSelected(r.key))
-      .map((r) => ({ clientId: r.clientId, projectId: r.projectId, periodName: r.periodName }));
+      .map((r) => ({ clientId: r.clientId, projectId: r.projectId, instance: r.instance, periodName: r.periodName }));
     const employeeId = assignee === "__unassign" ? "" : assignee;
     setOutcome({ summary: null, skipped: [], error: null });
     startTransition(async () => {

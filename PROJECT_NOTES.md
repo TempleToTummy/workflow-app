@@ -790,15 +790,25 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   src/lib/period-names.ts; period names are self-describing (legacy calendar
   names unchanged, everything else "YYYY-MM-DD..YYYY-MM-DD"). The next period
   starts the day after the current one ends, never from the due date.
-- Checklists: numbered 1..n; insert-at-position; one universal "Completed Y/N"
-  ProjectSubTask (systemKey COMPLETED) that every project with steps ends
-  with. All edits go through normalizeChecklist (src/lib/checklist.ts), which
-  also renumbers periods in progress and adds an inserted step to them when
-  their work isn't past it. `npm run db:upgrade -- --apply` migrates old data.
+- Checklists: numbered 1..n; insert-at-position. All edits go through
+  normalizeChecklist (src/lib/checklist.ts), which also renumbers periods in
+  progress and adds an inserted step to them when their work isn't past it.
+  (A shared "Completed Y/N" step was tried and reverted: each project keeps
+  its own. `npm run db:upgrade -- --apply` splits a merged one back.)
 - Project.ownerId ("Projects they handle" on the employee edit page) is a
   third default-assignee layer below step and engagement defaults.
 - ClientNote: client-level notes on the client page, searchable, backed up
   (BACKUP_VERSION 3).
+- Visibility is project-level (src/lib/access.ts): an employee is on an
+  engagement when they're its responsible person (engagement owner, else
+  Project.ownerId) or have a task in it, and then sees every step of it.
+  `visibleScope(user)` / `engagementFilter(scope)` replace the old
+  assigneeScope-based filters everywhere except the workload view (which is
+  about task load) and time entries (always your own).
+- Several copies of one project per client: ProjectClientMap's key is now
+  (clientId, projectId, instance) with an optional `name`; every
+  engagement-scoped table carries `instance` (default 1). Helpers in
+  src/lib/engagements.ts; copy 2+ URLs add `?n=`. BACKUP_VERSION 4.
 - Two periods at once: periodsInPlay (src/lib/workflow.ts) keeps unfinished
   earlier periods on the Tasks list; startNextPeriod opens the next period up
   to one period ahead of the calendar.

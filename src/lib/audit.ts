@@ -22,6 +22,7 @@ export const AUDIT = {
   DUE_DATE_CHANGED: "due.changed",
   NOTES_CHANGED: "notes.changed",
   ENGAGEMENT_CREATED: "engagement.created",
+  ENGAGEMENT_RENAMED: "engagement.renamed",
   PERIOD_OPENED: "period.opened",
   // Configuration
   DUE_RULE_CHANGED: "due_rule.changed",
@@ -105,6 +106,8 @@ export type AuditInput = {
   toValue?: string | null;
   clientId?: string | null;
   projectId?: string | null;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number | null;
   periodName?: string | null;
   contextLabel?: string | null;
   // Pass explicitly for events with no session (a password reset request, the
@@ -137,6 +140,7 @@ export async function recordAudit(input: AuditInput): Promise<void> {
         toValue: input.toValue ?? null,
         clientId: input.clientId ?? null,
         projectId: input.projectId ?? null,
+        instance: input.instance ?? 1,
         periodName: input.periodName ?? null,
         contextLabel: input.contextLabel ?? null,
       },
@@ -168,6 +172,7 @@ export async function recordAuditMany(inputs: AuditInput[]): Promise<void> {
           toValue: input.toValue ?? null,
           clientId: input.clientId ?? null,
           projectId: input.projectId ?? null,
+          instance: input.instance ?? 1,
           periodName: input.periodName ?? null,
           contextLabel: input.contextLabel ?? null,
         };
@@ -189,6 +194,7 @@ const ACTION_META: Record<string, { label: string; tone: "neutral" | "good" | "w
   [AUDIT.DUE_DATE_CHANGED]: { label: "Due date", tone: "neutral" },
   [AUDIT.NOTES_CHANGED]: { label: "Notes", tone: "neutral" },
   [AUDIT.ENGAGEMENT_CREATED]: { label: "Engagement", tone: "good" },
+  [AUDIT.ENGAGEMENT_RENAMED]: { label: "Renamed", tone: "neutral" },
   [AUDIT.PERIOD_OPENED]: { label: "Period", tone: "good" },
   [AUDIT.DUE_RULE_CHANGED]: { label: "Due rule", tone: "neutral" },
   [AUDIT.SCHEDULE_CHANGED]: { label: "Start date", tone: "neutral" },

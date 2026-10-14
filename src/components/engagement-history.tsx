@@ -12,11 +12,14 @@ import { actionMeta } from "@/lib/audit";
 export async function EngagementHistory({
   clientId,
   projectId,
+  instance = 1,
   periodName,
   limit = 12,
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client.
+  instance?: number;
   // When set, narrows to the period on screen; otherwise the whole engagement.
   periodName?: string | null;
   limit?: number;
@@ -25,6 +28,7 @@ export async function EngagementHistory({
     where: {
       clientId,
       projectId,
+      instance,
       ...(periodName ? { OR: [{ periodName }, { periodName: null }] } : {}),
     },
     orderBy: { createdAt: "desc" },

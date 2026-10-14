@@ -429,14 +429,9 @@ model Project {
 }
 
 model ProjectSubTask {
-  id        String  @id @default(cuid())
-  name      String
-  note      String?
-  // Marks a step the app manages itself. "COMPLETED" is the one universal
-  // "Completed Y/N" step: a single shared row that every project's checklist
-  // ends with, instead of a separate copy per project. See
-  // src/lib/universal-step.ts.
-  systemKey String? @unique
+  id   String  @id @default(cuid())
+  name String
+  note String?
 
   taskMaps   ProjectTaskMap[]
   activities ClientActivity[]
@@ -467,15 +462,25 @@ model ProjectTaskMap {
   @@id([projectId, subTaskId])
 }
 
-// Turns a project "on" for a client. Creating one of these is what should
-// generate the first period's ClientActivity rows (the source app did this
-// with a trigger, here it belongs in the server action that creates the
-// assignment).
+// Turns a project "on" for a client — an ENGAGEMENT. Creating one generates
+// the first period's ClientActivity rows.
+//
+// A client can run the same project more than once at the same time, fully
+// independently ("Bookkeeping" for the operating account and "Bookkeeping 2"
+// for the second entity): each is its own engagement with its own instance
+// number, checklist rows, periods, owner, notes and files. `instance` is 1 for
+// the first (and every engagement created before copies existed), 2, 3… for
+// the rest. Every row that belongs to an engagement carries the same
+// (clientId, projectId, instance) triple. See src/lib/engagements.ts.
 model ProjectClientMap {
   clientId          String
   client            Client    @relation(fields: [clientId], references: [id])
   projectId         String
   project           Project   @relation(fields: [projectId], references: [id])
+  instance          Int       @default(1)
+  // What this engagement is called on screen. null = the project's name, or
+  // "<project> <instance>" for a second copy. Free text: "Bookkeeping — LLC 2".
+  name              String?
   active            Boolean   @default(true)
   createSubtask     Boolean   @default(true)
   startDate         DateTime?
@@ -498,7 +503,7 @@ model ProjectClientMap {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  @@id([clientId, projectId])
+  @@id([clientId, projectId, instance])
 }
 
 // The real unit of work: one client, one project, one subtask, one period.
@@ -511,6 +516,8 @@ model ClientActivity {
   client            Client           @relation(fields: [clientId], references: [id])
   projectId         String
   project           Project          @relation(fields: [projectId], references: [id])
+  // Which copy of the project for this client (ProjectClientMap.instance).
+  instance          Int              @default(1)
   subTaskId         String
   subTask           ProjectSubTask   @relation(fields: [subTaskId], references: [id])
   periodName        String
@@ -551,7 +558,7 @@ model ClientActivity {
   timeEntries    TimeEntry[]
   clientRequests ClientRequest[]
 
-  @@unique([clientId, projectId, subTaskId, periodName])
+  @@unique([clientId, projectId, instance, subTaskId, periodName])
   @@index([status])
   @@index([dueDate])
 }
@@ -583,13 +590,14 @@ model AssignmentNote {
   client    Client    @relation(fields: [clientId], references: [id])
   projectId String
   project   Project   @relation(fields: [projectId], references: [id])
+  instance  Int       @default(1) // which copy of the project for this client (ProjectClientMap.instance)
   body      String
   authorId  String?
   author    Employee? @relation(fields: [authorId], references: [id])
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  @@index([clientId, projectId])
+  @@index([clientId, projectId, instance])
 }
 
 // A file attached to an engagement. `bucket` + `storageKey` are the object
@@ -605,6 +613,7 @@ model Document {
   client          Client         @relation(fields: [clientId], references: [id])
   projectId       String
   project         Project        @relation(fields: [projectId], references: [id])
+  instance        Int            @default(1) // which copy of the project for this client (ProjectClientMap.instance)
   periodName      String? // which accounting period it belongs to, if any
   filename        String // original upload name, shown in the UI
   mimeType        String
@@ -624,7 +633,7 @@ model Document {
   clientRequest   ClientRequest? @relation(fields: [clientRequestId], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
 
-  @@index([clientId, projectId])
+  @@index([clientId, projectId, instance])
   @@index([clientRequestId])
 }
 
@@ -694,6 +703,7 @@ model EmailMessage {
   client     Client?  @relation(fields: [clientId], references: [id])
   projectId  String?
   project    Project? @relation(fields: [projectId], references: [id])
+  instance   Int      @default(1) // which copy of the project for this client (ProjectClientMap.instance)
   periodName String?
 
   // Stable conversation id. Outbound seeds it; inbound replies inherit it.
@@ -725,7 +735,7 @@ model EmailMessage {
   sentAt     DateTime?
   receivedAt DateTime?
 
-  @@index([clientId, projectId])
+  @@index([clientId, projectId, instance])
   @@index([threadKey, createdAt])
   @@index([direction, createdAt])
   @@index([status])
@@ -785,6 +795,7 @@ model AuditEvent {
   // Engagement context, for the per-client and per-engagement history views.
   clientId     String?
   projectId    String?
+  instance     Int     @default(1) // which copy of the project for this client (ProjectClientMap.instance)
   periodName   String?
   contextLabel String?
 
@@ -826,6 +837,7 @@ model TimeEntry {
   client     Client?         @relation(fields: [clientId], references: [id])
   projectId  String?
   project    Project?        @relation(fields: [projectId], references: [id])
+  instance   Int             @default(1) // which copy of the project for this client (ProjectClientMap.instance)
   periodName String?
   // The specific checklist step the time was booked against, when there is
   // one. SetNull rather than Cascade: deleting a task must not delete the
@@ -856,7 +868,7 @@ model TimeEntry {
   updatedAt DateTime @updatedAt
 
   @@index([employeeId, startedAt])
-  @@index([clientId, projectId])
+  @@index([clientId, projectId, instance])
   @@index([activityId])
   // Finding the one running timer for an employee is the app's hottest time
   // query — it runs on every page that shows the timer bar.
@@ -961,6 +973,7 @@ model ClientRequest {
   client     Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
   projectId  String
   project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  instance   Int             @default(1) // which copy of the project for this client (ProjectClientMap.instance)
   // Which accounting period the request is about, so a document the client
   // sends lands in the right period's Files tab.
   periodName String?
@@ -1007,7 +1020,7 @@ model ClientRequest {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([clientId, projectId])
+  @@index([clientId, projectId, instance])
   @@index([status, expiresAt])
   @@index([activityId])
 }

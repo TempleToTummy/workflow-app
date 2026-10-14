@@ -27,7 +27,9 @@ const textareaClass =
 
 // Whose notes these are: one engagement (client + project), or the client as
 // a whole. Same panel, same rules; only the actions differ.
-type NoteScope = { kind: "engagement"; clientId: string; projectId: string } | { kind: "client"; clientId: string };
+type NoteScope =
+  | { kind: "engagement"; clientId: string; projectId: string; instance: number }
+  | { kind: "client"; clientId: string };
 
 const ACTIONS = {
   engagement: { update: updateAssignmentNote, remove: deleteAssignmentNote },
@@ -37,13 +39,16 @@ const ACTIONS = {
 export function AssignmentNotes({
   clientId,
   projectId,
+  instance = 1,
   notes,
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   notes: NoteRow[];
 }) {
-  return <NotesPanel scope={{ kind: "engagement", clientId, projectId }} notes={notes} />;
+  return <NotesPanel scope={{ kind: "engagement", clientId, projectId, instance }} notes={notes} />;
 }
 
 export function ClientNotes({ clientId, notes }: { clientId: string; notes: NoteRow[] }) {
@@ -83,7 +88,7 @@ function NotesPanel({
     startTransition(async () => {
       try {
         if (scope.kind === "engagement") {
-          await addAssignmentNote(scope.clientId, scope.projectId, { body: trimmed });
+          await addAssignmentNote(scope.clientId, scope.projectId, { body: trimmed }, scope.instance);
         } else {
           await addClientNote(scope.clientId, { body: trimmed });
         }

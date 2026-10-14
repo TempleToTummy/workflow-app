@@ -7,7 +7,7 @@ import {
   deleteProjectSubTask,
 } from "@/lib/actions";
 
-type SubTask = { id: string; name: string; note: string | null; systemKey: string | null };
+type SubTask = { id: string; name: string; note: string | null };
 
 const inputClass =
   "rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40";
@@ -72,32 +72,20 @@ function EditableRow({ task }: { task: SubTask }) {
 
   return (
     <tr className="border-b border-line last:border-0 hover:bg-black/[0.015]">
-      <td className="px-4 py-2 text-ink">
-        {task.name}
-        {task.systemKey && (
-          <span
-            title="One shared step that every project's checklist ends with. Renaming it here renames it everywhere."
-            className="ml-2 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent"
-          >
-            Every project · final step
-          </span>
-        )}
-      </td>
+      <td className="px-4 py-2 text-ink">{task.name}</td>
       <td className="px-4 py-2 text-ink-muted">{task.note ?? "—"}</td>
       <td className="px-4 py-2 text-right">
         <div className="flex justify-end gap-3">
           <button onClick={() => setEditing(true)} className="text-xs text-accent hover:underline">
             Edit
           </button>
-          {!task.systemKey && (
-            <button
-              onClick={remove}
-              disabled={isPending}
-              className="text-xs text-ink-muted hover:text-overdue disabled:opacity-50"
-            >
-              Delete
-            </button>
-          )}
+          <button
+            onClick={remove}
+            disabled={isPending}
+            className="text-xs text-ink-muted hover:text-overdue disabled:opacity-50"
+          >
+            Delete
+          </button>
         </div>
         {error && <p className="mt-1 text-xs text-overdue">{error}</p>}
       </td>

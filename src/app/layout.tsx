@@ -5,6 +5,7 @@ import { SidebarNav } from "@/components/sidebar-nav";
 import { getCurrentUser } from "@/lib/auth";
 import { unreadMentionCount } from "@/lib/comment-data";
 import { runningTimer } from "@/lib/time-data";
+import { engagementHref } from "@/lib/engagements";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -60,7 +61,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                         "Internal time",
                       href:
                         timer.clientId && timer.projectId
-                          ? `/assignments/${timer.clientId}/${timer.projectId}`
+                          ? engagementHref({
+                              clientId: timer.clientId,
+                              projectId: timer.projectId,
+                              instance: timer.instance,
+                            })
                           : null,
                     }
                   : null

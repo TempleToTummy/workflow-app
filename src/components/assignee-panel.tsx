@@ -10,12 +10,15 @@ type Step = { id: string; name: string; assigneeId: string | null };
 export function AssigneePanel({
   clientId,
   projectId,
+  instance = 1,
   periodName,
   steps,
   employees,
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   periodName: string | null;
   steps: Step[];
   employees: Employee[];
@@ -74,7 +77,8 @@ export function AssigneePanel({
           projectId,
           periodName,
           employeeId,
-          target
+          target,
+          instance
         );
         const who = employeeId ? (nameById.get(employeeId) ?? "someone") : "Unassigned";
         setMessage(

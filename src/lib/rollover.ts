@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { nextPeriodName } from "@/lib/periods";
 import { effectiveAnchor } from "@/lib/period-names";
 import { openPeriodForAssignment } from "@/lib/scheduler";
+import { engagementId, engagementWhere } from "@/lib/engagements";
 
 // Lives outside src/lib/actions.ts so both the single-step and the bulk status
 // actions can call it without it becoming a server action of its own (every
@@ -14,9 +15,15 @@ import { openPeriodForAssignment } from "@/lib/scheduler";
 // next accounting period and generate that period's (Not Started) task rows.
 // One-time projects (no next period) are marked complete and inactive
 // instead of rolling forward. The caller is responsible for access checks.
-export async function maybeRollPeriodForward(clientId: string, projectId: string, periodName: string) {
+export async function maybeRollPeriodForward(
+  clientId: string,
+  projectId: string,
+  periodName: string,
+  instance: number = 1
+) {
+  const key = { clientId, projectId, instance };
   const assignment = await prisma.projectClientMap.findUnique({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     include: { client: { select: { archivedAt: true } } },
   });
   // Already rolled past this period (or the assignment is gone) — nothing to do.
@@ -26,7 +33,7 @@ export async function maybeRollPeriodForward(clientId: string, projectId: string
   if (assignment.client.archivedAt) return;
 
   const siblings = await prisma.clientActivity.findMany({
-    where: { clientId, projectId, periodName },
+    where: { ...engagementWhere(key), periodName },
   });
   if (siblings.length === 0 || !siblings.every((a) => a.status === "DONE")) return;
 
@@ -42,7 +49,7 @@ export async function maybeRollPeriodForward(clientId: string, projectId: string
 
   if (!nextName) {
     await prisma.projectClientMap.update({
-      where: { clientId_projectId: { clientId, projectId } },
+      where: engagementId(key),
       data: { completedDate: new Date(), active: false },
     });
     return;
@@ -54,6 +61,7 @@ export async function maybeRollPeriodForward(clientId: string, projectId: string
   await openPeriodForAssignment({
     clientId,
     projectId,
+    instance,
     periodName: nextName,
     project: {
       recurringId: project.recurringId,
@@ -65,7 +73,7 @@ export async function maybeRollPeriodForward(clientId: string, projectId: string
   });
 
   await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     data: { currentPeriod: nextName, completedDate: new Date() },
   });
 

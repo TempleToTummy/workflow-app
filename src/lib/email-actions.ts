@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireUser, requireAdmin, assigneeScope } from "@/lib/auth";
+import { requireUser, requireAdmin } from "@/lib/auth";
 import { formatDueDate } from "@/lib/dates";
 import {
   emailTransport,
@@ -17,22 +17,21 @@ import {
   isValidAddress,
   type TemplateContext,
 } from "@/lib/email";
+import { canAccessClient } from "@/lib/access";
+import { engagementId, engagementLabel, splitProjectRef } from "@/lib/engagements";
 
 // Email server actions, kept out of the already-large src/lib/actions.ts the
 // same way auth-actions.ts is. Every action guards itself — server actions are
 // reachable by direct POST, and an employee must not be able to send mail on
 // behalf of a client they can't see.
 
-// An EMPLOYEE may only correspond about engagements they have a task on;
-// ADMIN is unrestricted. Mirrors assigneeScope() on the read side.
+// An EMPLOYEE may only correspond about clients they're on (responsible for
+// one of the client's projects, or have a task there — src/lib/access.ts);
+// ADMIN is unrestricted.
 async function assertCanEmailClient(clientId: string | null | undefined) {
   const user = await requireUser();
-  const mine = assigneeScope(user);
-  if (!mine || !clientId) return user;
-  const onIt = await prisma.clientActivity.count({
-    where: { clientId, assigneeId: mine },
-  });
-  if (onIt === 0) {
+  if (user.role === "ADMIN" || !clientId) return user;
+  if (!(await canAccessClient(user, clientId))) {
     throw new Error("You don't have any work with this client.");
   }
   return user;
@@ -41,6 +40,7 @@ async function assertCanEmailClient(clientId: string | null | undefined) {
 export type SendEmailInput = {
   clientId?: string | null;
   projectId?: string | null;
+  instance?: number | null;
   periodName?: string | null;
   toEmail: string;
   toName?: string | null;
@@ -53,7 +53,10 @@ export type SendEmailInput = {
   threadKey?: string | null;
 };
 
-export async function sendEmailMessage(input: SendEmailInput) {
+export async function sendEmailMessage(raw: SendEmailInput) {
+  // The composer's project picker sends "projectId#n" for a second copy.
+  const ref = splitProjectRef(raw.projectId);
+  const input = { ...raw, projectId: ref.projectId, instance: raw.instance ?? ref.instance };
   const user = await assertCanEmailClient(input.clientId);
 
   const toEmail = input.toEmail.trim().toLowerCase();
@@ -74,6 +77,7 @@ export async function sendEmailMessage(input: SendEmailInput) {
       clientId: input.clientId,
       projectId: input.projectId,
       periodName: input.periodName,
+      instance: input.instance,
     });
 
   const replyToken = newReplyToken();
@@ -88,6 +92,7 @@ export async function sendEmailMessage(input: SendEmailInput) {
       status: "QUEUED",
       clientId: input.clientId ?? null,
       projectId: input.projectId ?? null,
+      instance: input.instance ?? 1,
       periodName: input.periodName ?? null,
       threadKey,
       replyToken,
@@ -191,9 +196,12 @@ export async function retryEmailMessage(messageId: string) {
 export async function buildTemplateContext(input: {
   clientId?: string | null;
   projectId?: string | null;
+  instance?: number | null;
   periodName?: string | null;
   contactFirstName?: string | null;
 }): Promise<TemplateContext> {
+  const ref = splitProjectRef(input.projectId);
+  input = { ...input, projectId: ref.projectId, instance: input.instance ?? ref.instance };
   // The preview reads live engagement data (open task count, next step, due
   // date), so it needs the same access as sending — otherwise it's a way to
   // read another client's progress by id.
@@ -226,18 +234,20 @@ export async function buildTemplateContext(input: {
         select: { name: true },
       }),
       prisma.projectClientMap.findUnique({
-        where: { clientId_projectId: { clientId: input.clientId, projectId: input.projectId } },
-        select: { currentPeriod: true },
+        where: engagementId({ clientId: input.clientId, projectId: input.projectId, instance: input.instance ?? 1 }),
+        select: { currentPeriod: true, name: true, instance: true },
       }),
     ]);
-    context.project_name = project?.name ?? "";
+    context.project_name = project
+      ? engagementLabel(project.name, assignment?.name, assignment?.instance ?? 1)
+      : "";
 
     const periodName = input.periodName ?? assignment?.currentPeriod ?? null;
     context.period = periodName ?? "";
 
     if (periodName) {
       const activities = await prisma.clientActivity.findMany({
-        where: { clientId: input.clientId, projectId: input.projectId, periodName },
+        where: { clientId: input.clientId, projectId: input.projectId, instance: input.instance ?? 1, periodName },
         include: { subTask: true },
         orderBy: { taskSeqNo: "asc" },
       });

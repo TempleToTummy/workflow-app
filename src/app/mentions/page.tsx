@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listMentions } from "@/lib/comment-data";
 import { MentionList } from "@/components/mention-list";
+import { engagementHref } from "@/lib/engagements";
 
 // Your @mentions.
 //
@@ -32,7 +33,7 @@ export default async function MentionsPage({
     projectName: m.comment.activity.project.name,
     stepName: m.comment.activity.subTask.name,
     periodName: m.comment.activity.periodName,
-    href: `/assignments/${m.comment.activity.clientId}/${m.comment.activity.projectId}`,
+    href: engagementHref(m.comment.activity, { period: m.comment.activity.periodName }),
   }));
 
   return (

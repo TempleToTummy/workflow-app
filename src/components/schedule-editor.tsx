@@ -118,6 +118,7 @@ export function ProjectSchedule({
 export function EngagementSchedule({
   clientId,
   projectId,
+  instance = 1,
   recurring,
   projectAnchor,
   clientAnchor,
@@ -125,6 +126,8 @@ export function EngagementSchedule({
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   recurring: RecurringType;
   projectAnchor: string; // yyyy-mm-dd or ""
   clientAnchor: string; // yyyy-mm-dd or ""
@@ -147,7 +150,7 @@ export function EngagementSchedule({
     setError(null);
     startTransition(async () => {
       try {
-        await setAssignmentRecurrenceAnchor(clientId, projectId, nextValue);
+        await setAssignmentRecurrenceAnchor(clientId, projectId, nextValue, instance);
         setEditing(false);
         router.refresh();
       } catch (err) {

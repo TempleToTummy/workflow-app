@@ -7,6 +7,7 @@ import { describeRequest } from "@/lib/client-requests";
 import type { CsvRow } from "@/lib/csv";
 import { maskTaxId } from "@/lib/sensitive-fields";
 import { RECURRING_LABELS } from "@/lib/period-names";
+import { engagementLabel } from "@/lib/engagements";
 
 // The data behind every CSV export, one builder per report.
 //
@@ -60,13 +61,14 @@ async function currentPeriodIndex() {
   const [assignments, activities] = await Promise.all([
     prisma.projectClientMap.findMany({
       where: { active: true, client: { archivedAt: null } },
-      include: { client: true },
+      include: { client: true, project: { select: { name: true } } },
     }),
     prisma.clientActivity.findMany({
       where: { client: { archivedAt: null } },
       select: {
         clientId: true,
         projectId: true,
+        instance: true,
         periodName: true,
         status: true,
         taskSeqNo: true,
@@ -76,14 +78,15 @@ async function currentPeriodIndex() {
 
   const byPair = new Map<string, { status: string; taskSeqNo: number }[]>();
   for (const a of activities) {
-    const key = `${a.clientId}__${a.projectId}__${a.periodName}`;
+    const key = `${a.clientId}__${a.projectId}__${a.instance}__${a.periodName}`;
     const list = byPair.get(key);
     if (list) list.push(a);
     else byPair.set(key, [a]);
   }
 
-  const forAssignment = (clientId: string, projectId: string, period: string | null) =>
-    period ? (byPair.get(`${clientId}__${projectId}__${period}`) ?? []) : [];
+  // Each copy of a project for a client is its own engagement with its own rows.
+  const forAssignment = (clientId: string, projectId: string, period: string | null, instance: number = 1) =>
+    period ? (byPair.get(`${clientId}__${projectId}__${instance}__${period}`) ?? []) : [];
 
   return { assignments, forAssignment };
 }
@@ -175,7 +178,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
           let taskCount = 0;
           let done = 0;
           for (const a of mine) {
-            const rows = index.forAssignment(a.clientId, a.projectId, a.currentPeriod);
+            const rows = index.forAssignment(a.clientId, a.projectId, a.currentPeriod, a.instance);
             taskCount += rows.length;
             done += rows.filter((r) => r.status === "DONE").length;
           }
@@ -210,7 +213,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
       const rows: CsvRow[] = [];
       for (const project of projects) {
         for (const a of index.assignments.filter((x) => x.projectId === project.id)) {
-          const activity = index.forAssignment(a.clientId, a.projectId, a.currentPeriod);
+          const activity = index.forAssignment(a.clientId, a.projectId, a.currentPeriod, a.instance);
           const status = deriveAssignmentStatus(
             activity.map((r) => ({ status: r.status as never, taskSeqNo: r.taskSeqNo }))
           );
@@ -243,9 +246,13 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
         prisma.project.findMany({ orderBy: { name: "asc" } }),
         currentPeriodIndex(),
       ]);
-      const pairs = new Map(
-        index.assignments.map((a) => [`${a.clientId}__${a.projectId}`, a])
-      );
+      // Every engagement of each client/service pair — a client running a
+      // service twice has a row for each copy.
+      const pairs = new Map<string, (typeof index.assignments)[number][]>();
+      for (const a of index.assignments) {
+        const k = `${a.clientId}__${a.projectId}`;
+        pairs.set(k, [...(pairs.get(k) ?? []), a]);
+      }
 
       // Flattened to one row per client/service pair. A 40-column grid is
       // unreadable in a spreadsheet and impossible to pivot; this shape can be
@@ -253,21 +260,21 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
       const rows: CsvRow[] = [];
       for (const client of clients) {
         for (const project of projects) {
-          const assignment = pairs.get(`${client.id}__${project.id}`);
-          if (!assignment) continue;
-          const activity = index.forAssignment(client.id, project.id, assignment.currentPeriod);
+          for (const assignment of pairs.get(`${client.id}__${project.id}`) ?? []) {
+          const activity = index.forAssignment(client.id, project.id, assignment.currentPeriod, assignment.instance);
           const status = deriveAssignmentStatus(
             activity.map((r) => ({ status: r.status as never, taskSeqNo: r.taskSeqNo }))
           );
           rows.push([
             client.companyName,
-            project.name,
+            engagementLabel(project.name, assignment.name, assignment.instance),
             assignment.currentPeriod,
             STATUS_WORDS[status] ?? status,
             progressLabel(
               activity.map((r) => ({ status: r.status as never, taskSeqNo: r.taskSeqNo }))
             ),
           ]);
+          }
         }
       }
 
@@ -308,7 +315,7 @@ export const REPORT_EXPORTS: Record<string, ReportExport> = {
           };
           const mine = index.assignments.filter((a) => a.projectId === p.id);
           for (const a of mine) {
-            const activity = index.forAssignment(a.clientId, a.projectId, a.currentPeriod);
+            const activity = index.forAssignment(a.clientId, a.projectId, a.currentPeriod, a.instance);
             const status = deriveAssignmentStatus(
               activity.map((r) => ({ status: r.status as never, taskSeqNo: r.taskSeqNo }))
             );

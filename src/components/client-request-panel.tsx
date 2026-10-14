@@ -49,6 +49,7 @@ const inputClass =
 export function ClientRequestPanel({
   clientId,
   projectId,
+  instance = 1,
   periodName,
   steps,
   requests,
@@ -56,6 +57,8 @@ export function ClientRequestPanel({
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   periodName: string | null;
   steps: RequestStep[];
   requests: RequestRow[];
@@ -96,6 +99,7 @@ export function ClientRequestPanel({
         const result = await createClientRequest({
           clientId,
           projectId,
+          instance,
           periodName,
           activityId: activityId || null,
           kind,

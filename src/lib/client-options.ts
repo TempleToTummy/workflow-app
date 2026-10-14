@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { assigneeScope, type CurrentUser } from "@/lib/auth";
+import type { CurrentUser } from "@/lib/auth";
+import { visibleScope } from "@/lib/access";
 
 // Filter options for client groups and tags.
 //
@@ -12,12 +13,12 @@ import { assigneeScope, type CurrentUser } from "@/lib/auth";
 // suggestions. Scoped like everything else, so an employee's dropdown can't
 // leak the names of groups made up of clients they don't work with.
 export async function clientGroupNames(user: CurrentUser): Promise<string[]> {
-  const mine = assigneeScope(user);
+  const scope = await visibleScope(user);
   const rows = await prisma.client.findMany({
     where: {
       groupName: { not: null },
       archivedAt: null,
-      ...(mine ? { activities: { some: { assigneeId: mine } } } : {}),
+      ...(scope ? { id: { in: [...scope.clientIds] } } : {}),
     },
     select: { groupName: true },
     distinct: ["groupName"],
@@ -30,10 +31,10 @@ export async function clientGroupNames(user: CurrentUser): Promise<string[]> {
 // Scoped for the same reason as the groups: a tag name can itself say
 // something about a client ("Audit in progress").
 export async function visibleTags(user: CurrentUser) {
-  const mine = assigneeScope(user);
+  const scope = await visibleScope(user);
   return prisma.tag.findMany({
-    where: mine
-      ? { clients: { some: { client: { archivedAt: null, activities: { some: { assigneeId: mine } } } } } }
+    where: scope
+      ? { clients: { some: { client: { archivedAt: null, id: { in: [...scope.clientIds] } } } } }
       : undefined,
     orderBy: { name: "asc" },
     select: { id: true, name: true, color: true },

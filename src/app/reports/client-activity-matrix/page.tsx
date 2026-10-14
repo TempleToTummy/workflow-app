@@ -19,8 +19,10 @@ export default async function ClientActivityMatrixPage({
     prisma.clientActivity.findMany({ where: { client: { archivedAt: null } } }),
   ]);
 
+  // One cell per client × service. When a client runs a service more than
+  // once, the cell shows the first copy; the dashboard lists every copy.
   const assignmentByPair = new Map(
-    assignments.map((a) => [`${a.clientId}__${a.projectId}`, a])
+    [...assignments].sort((a, b) => b.instance - a.instance).map((a) => [`${a.clientId}__${a.projectId}`, a])
   );
 
   function statusFor(clientId: string, projectId: string) {
@@ -30,6 +32,7 @@ export default async function ClientActivityMatrixPage({
       (act) =>
         act.clientId === clientId &&
         act.projectId === projectId &&
+        act.instance === assignment.instance &&
         act.periodName === assignment.currentPeriod
     );
     return deriveAssignmentStatus(rows);

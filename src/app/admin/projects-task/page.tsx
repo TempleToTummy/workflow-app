@@ -3,10 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ProjectSubTaskManager } from "@/components/project-subtask-manager";
 
 export default async function ProjectsTaskPage() {
-  // The universal final step first, then the rest alphabetically.
-  const subtasks = await prisma.projectSubTask.findMany({
-    orderBy: [{ systemKey: { sort: "asc", nulls: "last" } }, { name: "asc" }],
-  });
+  const subtasks = await prisma.projectSubTask.findMany({ orderBy: { name: "asc" } });
 
   return (
     <div className="mx-auto w-full max-w-6xl px-8 py-8">

@@ -7,8 +7,8 @@ import { resolveRange, rollUp, type TimeRangeKey, type Rollup } from "@/lib/time
 // publish every one of them as a POST endpoint for no reason. The mutations
 // live in src/lib/time-actions.ts.
 //
-// Visibility follows the same rule as the rest of the app (see assigneeScope
-// in src/lib/auth.ts), with one addition that matters: an EMPLOYEE sees only
+// Visibility follows the same rule as the rest of the app (src/lib/access.ts),
+// with one addition that matters: an EMPLOYEE sees only
 // their OWN time, and never a money figure. A timesheet is personal data and a
 // billing rate is commercially sensitive, so "can see the task" does not imply
 // "can see what the firm bills for it".
@@ -44,6 +44,8 @@ export async function listTimeEntries(where: {
   employeeId?: string | null;
   clientId?: string | null;
   projectId?: string | null;
+  // With projectId: which copy of the project for this client.
+  instance?: number | null;
   activityId?: string | null;
   periodName?: string | null;
   range?: { start: Date; end: Date } | null;
@@ -58,6 +60,7 @@ export async function listTimeEntries(where: {
       ...(where.employeeId ? { employeeId: where.employeeId } : {}),
       ...(where.clientId ? { clientId: where.clientId } : {}),
       ...(where.projectId ? { projectId: where.projectId } : {}),
+      ...(where.projectId && where.instance ? { instance: where.instance } : {}),
       ...(where.activityId ? { activityId: where.activityId } : {}),
       ...(where.periodName ? { periodName: where.periodName } : {}),
       ...(where.includeRunning ? {} : { endedAt: { not: null } }),

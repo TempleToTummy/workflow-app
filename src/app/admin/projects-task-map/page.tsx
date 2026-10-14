@@ -8,8 +8,7 @@ export default async function ProjectsTaskMapPage() {
       include: { subtasks: { include: { subTask: true }, orderBy: { sequence: "asc" } } },
       orderBy: { name: "asc" },
     }),
-    // The universal step is added to every project automatically.
-    prisma.projectSubTask.findMany({ where: { systemKey: null }, orderBy: { name: "asc" } }),
+    prisma.projectSubTask.findMany({ orderBy: { name: "asc" } }),
   ]);
 
   return (
@@ -36,7 +35,6 @@ export default async function ProjectsTaskMapPage() {
               subTaskId: tm.subTaskId,
               name: tm.subTask.name,
               sequence: tm.sequence,
-              universal: Boolean(tm.subTask.systemKey),
             }))}
             availableSubtasks={subtasks}
           />

@@ -7,6 +7,7 @@ import { EmailStatusBadge } from "@/components/email-status-badge";
 import { EmailThreadReply } from "@/components/email-thread-reply";
 import { composerClients, composerTemplates, messageScope } from "@/lib/email-data";
 import { transportIsLive, replyToAddress } from "@/lib/email";
+import { engagementHref as engagementHrefFor } from "@/lib/engagements";
 
 // One conversation. Opening any message shows the whole thread it belongs to,
 // oldest first, with a reply box at the bottom that stays inside the thread.
@@ -21,7 +22,7 @@ export default async function EmailThreadPage({
 
   // The scope is applied to the lookup itself, so an employee opening a
   // message id they aren't entitled to gets a 404 rather than the content.
-  const scope = messageScope(user);
+  const scope = await messageScope(user);
   const message = await prisma.emailMessage.findFirst({
     where: Object.keys(scope).length ? { AND: [{ id }, scope] } : { id },
     include: { client: true, project: true },
@@ -50,9 +51,10 @@ export default async function EmailThreadPage({
 
   const engagementHref =
     message.clientId && message.projectId
-      ? `/assignments/${message.clientId}/${message.projectId}${
-          message.periodName ? `?period=${encodeURIComponent(message.periodName)}` : ""
-        }`
+      ? engagementHrefFor(
+          { clientId: message.clientId, projectId: message.projectId, instance: message.instance },
+          { period: message.periodName }
+        )
       : message.clientId
       ? `/clients/${message.clientId}`
       : null;

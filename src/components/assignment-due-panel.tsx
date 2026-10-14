@@ -22,6 +22,7 @@ import {
 export function AssignmentDuePanel({
   clientId,
   projectId,
+  instance = 1,
   recurring,
   projectOffset,
   clientOffset,
@@ -30,6 +31,8 @@ export function AssignmentDuePanel({
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   recurring: RecurringType;
   projectOffset: number;
   clientOffset: number | null;
@@ -48,7 +51,7 @@ export function AssignmentDuePanel({
     setError(null);
     startTransition(async () => {
       try {
-        await setAssignmentDueOffset(clientId, projectId, next);
+        await setAssignmentDueOffset(clientId, projectId, next, instance);
         setEditing(false);
         router.refresh();
       } catch (err) {

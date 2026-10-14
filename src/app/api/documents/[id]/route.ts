@@ -62,7 +62,7 @@ export async function GET(
     where: { id },
     include: { client: { select: { companyName: true } } },
   });
-  if (!doc || !(await canAccessEngagement(user, doc.clientId, doc.projectId))) {
+  if (!doc || !(await canAccessEngagement(user, doc.clientId, doc.projectId, doc.instance))) {
     return plain("Not found", 404);
   }
 

@@ -8,7 +8,10 @@ import { ContactManager } from "@/components/contact-manager";
 import { ClientNotes } from "@/components/assignment-notes";
 import { SensitiveValue } from "@/components/sensitive-value";
 import { maskSsn, maskTaxId } from "@/lib/sensitive-fields";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canSee, engagementFilter, visibleScope } from "@/lib/access";
+import { engagementHref, engagementKeyString, engagementLabel, nextInstance } from "@/lib/engagements";
+import { AddProjectCopy } from "@/components/add-project-copy";
 import { formatBytes, formatDate } from "@/lib/dates";
 import { redirect } from "next/navigation";
 import { RECURRING_SHORT_LABELS as RECURRING_LABELS, formatPeriodName } from "@/lib/period-names";
@@ -19,25 +22,13 @@ export default async function ClientDetailPage({
   params: Promise<{ clientId: string }>;
 }) {
   const user = await requireUser();
-  const mine = assigneeScope(user);
   const { clientId } = await params;
 
-  if (mine) {
-    const onIt = await prisma.clientActivity.count({ where: { clientId, assigneeId: mine } });
-    if (onIt === 0) redirect("/clients");
-  }
-
-  // An employee may be on one of this client's services and not another; the
-  // file list below only shows files from engagements they can open.
-  const myProjectIds = mine
-    ? (
-        await prisma.clientActivity.findMany({
-          where: { clientId, assigneeId: mine },
-          select: { projectId: true },
-          distinct: ["projectId"],
-        })
-      ).map((r) => r.projectId)
-    : null;
+  // Project-level visibility (src/lib/access.ts): an employee can open a client
+  // they're on, and sees that client's engagements they're on — the whole of
+  // each one. null = admin, everything.
+  const scope = await visibleScope(user);
+  if (scope && !scope.clientIds.has(clientId)) redirect("/clients");
   const isAdmin = user.role === "ADMIN";
 
   const [client, allProjects, documents, periods, allTags] = await Promise.all([
@@ -52,7 +43,10 @@ export default async function ClientDetailPage({
           orderBy: { createdAt: "desc" },
           include: { author: { select: { firstName: true, lastName: true } } },
         },
-        projectAssignments: { include: { project: true }, orderBy: { createdAt: "asc" } },
+        projectAssignments: {
+          include: { project: { include: { owner: true } }, defaultAssignee: true },
+          orderBy: [{ createdAt: "asc" }, { instance: "asc" }],
+        },
       },
     }),
     prisma.project.findMany({
@@ -60,7 +54,7 @@ export default async function ClientDetailPage({
       orderBy: { name: "asc" },
     }),
     prisma.document.findMany({
-      where: { clientId, ...(myProjectIds ? { projectId: { in: myProjectIds } } : {}) },
+      where: { clientId, ...engagementFilter(scope) },
       include: { project: true, uploadedBy: true },
       orderBy: { createdAt: "desc" },
     }),
@@ -94,17 +88,27 @@ export default async function ClientDetailPage({
   // Every file this client has, grouped project → period, so a finished
   // period's uploads are still findable after the engagement rolls forward.
   const periodStart = new Map(periods.map((p) => [p.name, p.startDate.getTime()]));
+  const engagementByKey = new Map(client.projectAssignments.map((a) => [engagementKeyString(a), a]));
   const currentPeriodByProject = new Map(
-    client.projectAssignments.map((a) => [a.projectId, a.currentPeriod])
+    client.projectAssignments.map((a) => [engagementKeyString(a), a.currentPeriod])
   );
   type Doc = (typeof documents)[number];
+  // Grouped by engagement: two copies of the same project keep their files apart.
   const fileGroups = [...documents.reduce((acc, d) => {
-    const g = acc.get(d.projectId) ?? { projectId: d.projectId, name: d.project.name, periods: new Map<string, Doc[]>() };
-    const key = d.periodName ?? "";
-    g.periods.set(key, [...(g.periods.get(key) ?? []), d]);
-    acc.set(d.projectId, g);
+    const k = engagementKeyString(d);
+    const e = engagementByKey.get(k);
+    const g = acc.get(k) ?? {
+      key: k,
+      projectId: d.projectId,
+      instance: d.instance,
+      name: engagementLabel(d.project.name, e?.name, d.instance),
+      periods: new Map<string, Doc[]>(),
+    };
+    const pk = d.periodName ?? "";
+    g.periods.set(pk, [...(g.periods.get(pk) ?? []), d]);
+    acc.set(k, g);
     return acc;
-  }, new Map<string, { projectId: string; name: string; periods: Map<string, Doc[]> }>()).values()]
+  }, new Map<string, { key: string; projectId: string; instance: number; name: string; periods: Map<string, Doc[]> }>()).values()]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((g) => ({
       ...g,
@@ -114,6 +118,10 @@ export default async function ClientDetailPage({
     }));
 
   const assignedIds = new Set(client.projectAssignments.map((a) => a.projectId));
+  // Engagements on the Projects table: an employee sees the ones they're on.
+  const engagements = client.projectAssignments.filter((a) => canSee(scope, a));
+  const nextNumberFor = (projectId: string) =>
+    nextInstance(client.projectAssignments.filter((a) => a.projectId === projectId).map((a) => a.instance));
   const assignable = allProjects
     .filter((p) => !assignedIds.has(p.id))
     .map((p) => ({
@@ -295,21 +303,28 @@ export default async function ClientDetailPage({
           <thead>
             <tr className="border-b border-line text-xs uppercase tracking-wide text-ink-muted">
               <th className="py-2 font-medium">Project</th>
+              <th className="py-2 font-medium">Assigned to</th>
               <th className="py-2 font-medium">Active</th>
               <th className="py-2 font-medium">Current Period</th>
               <th className="py-2 font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {client.projectAssignments.map((a) => (
-              <tr key={a.projectId} className="border-b border-line last:border-0">
+            {engagements.map((a) => {
+              const responsible = a.defaultAssignee ?? a.project.owner;
+              const label = engagementLabel(a.project.name, a.name, a.instance);
+              return (
+              <tr key={engagementKeyString(a)} className="border-b border-line last:border-0">
                 <td className="py-2">
-                  <Link
-                    href={`/projects/${a.projectId}`}
-                    className="text-ink hover:text-accent"
-                  >
-                    {a.project.name}
+                  <Link href={engagementHref(a)} className="text-ink hover:text-accent">
+                    {label}
                   </Link>
+                  {label !== a.project.name && (
+                    <span className="ml-1.5 text-xs text-ink-muted">{a.project.name}</span>
+                  )}
+                </td>
+                <td className="py-2 text-ink-muted">
+                  {responsible ? `${responsible.firstName} ${responsible.lastName}` : "—"}
                 </td>
                 <td className="py-2">
                   <span
@@ -324,18 +339,26 @@ export default async function ClientDetailPage({
                   {a.currentPeriod ? formatPeriodName(a.currentPeriod) : "—"}
                 </td>
                 <td className="py-2 text-right">
-                  <Link
-                    href={`/assignments/${client.id}/${a.projectId}`}
-                    className="text-accent hover:underline"
-                  >
-                    Open checklist
-                  </Link>
+                  <div className="flex flex-col items-end gap-1">
+                    <Link href={engagementHref(a)} className="text-accent hover:underline">
+                      Open checklist
+                    </Link>
+                    {isAdmin && !client.archivedAt && a.active && (
+                      <AddProjectCopy
+                        clientId={client.id}
+                        projectId={a.projectId}
+                        projectName={a.project.name}
+                        nextNumber={nextNumberFor(a.projectId)}
+                      />
+                    )}
+                  </div>
                 </td>
               </tr>
-            ))}
-            {client.projectAssignments.length === 0 && (
+              );
+            })}
+            {engagements.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-6 text-center text-ink-muted">
+                <td colSpan={5} className="py-6 text-center text-ink-muted">
                   No projects assigned yet.
                 </td>
               </tr>
@@ -369,7 +392,7 @@ export default async function ClientDetailPage({
 
         <div className="flex flex-col gap-5">
           {fileGroups.map((g) => (
-            <div key={g.projectId}>
+            <div key={g.key}>
               <div className="mb-2 flex items-center justify-between">
                 <Link
                   href={`/projects/${g.projectId}`}
@@ -383,9 +406,7 @@ export default async function ClientDetailPage({
               </div>
               <div className="flex flex-col gap-2">
                 {g.periods.map(([periodName, docs]) => {
-                  const isCurrent = currentPeriodByProject.get(g.projectId) === periodName;
-                  const q = new URLSearchParams({ tab: "files" });
-                  if (periodName && !isCurrent) q.set("period", periodName);
+                  const isCurrent = currentPeriodByProject.get(g.key) === periodName;
                   return (
                     <div key={periodName || "none"} className="overflow-hidden rounded-md border border-line">
                       <div className="flex items-center justify-between border-b border-line bg-black/[0.02] px-3 py-1.5">
@@ -394,7 +415,10 @@ export default async function ClientDetailPage({
                           {isCurrent && <span className="ml-1.5 font-sans text-accent">· current</span>}
                         </span>
                         <Link
-                          href={`/assignments/${client.id}/${g.projectId}?${q.toString()}`}
+                          href={engagementHref(
+                            { clientId: client.id, projectId: g.projectId, instance: g.instance },
+                            { tab: "files", period: periodName && !isCurrent ? periodName : null }
+                          )}
                           className="text-xs text-accent hover:underline"
                         >
                           Open project →

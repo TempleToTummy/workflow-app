@@ -18,17 +18,21 @@ export function AssignmentTabs({
   active,
   counts,
   period,
+  instance = 1,
 }: {
   basePath: string;
   active: AssignmentTab;
   counts?: Partial<Record<AssignmentTab, number>>;
   period?: string | null;
+  // Which copy of the project for this client; every tab link keeps it.
+  instance?: number;
 }) {
   return (
     <nav className="mt-6 flex gap-6 border-b border-line">
       {TABS.map((tab) => {
         const isActive = tab.id === active;
         const params = new URLSearchParams();
+        if (instance > 1) params.set("n", String(instance));
         if (tab.id !== "list") params.set("tab", tab.id);
         if (period) params.set("period", period);
         const query = params.toString();

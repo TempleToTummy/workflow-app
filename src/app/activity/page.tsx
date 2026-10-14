@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/dates";
 import { actionMeta, AUDIT_FILTER_GROUPS } from "@/lib/audit";
 import { AuditFilters } from "@/components/audit-filters";
 import type { Prisma } from "@prisma/client";
+import { engagementHref } from "@/lib/engagements";
 
 // The audit log: who changed what, and when.
 //
@@ -153,7 +154,7 @@ export default async function ActivityLogPage({
                       </div>
                       {e.clientId && e.projectId && (
                         <Link
-                          href={`/assignments/${e.clientId}/${e.projectId}`}
+                          href={engagementHref({ clientId: e.clientId, projectId: e.projectId, instance: e.instance })}
                           className="shrink-0 pt-0.5 text-xs text-accent hover:underline"
                         >
                           Open

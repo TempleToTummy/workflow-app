@@ -79,12 +79,14 @@ export type StaffRequest = Awaited<ReturnType<typeof requestsForEngagement>>[num
 export async function requestsForEngagement(input: {
   clientId: string;
   projectId: string;
+  instance?: number;
   periodName?: string | null;
 }) {
   return prisma.clientRequest.findMany({
     where: {
       clientId: input.clientId,
       projectId: input.projectId,
+      instance: input.instance ?? 1,
       // A request raised before a rollover still belongs to its own period.
       ...(input.periodName ? { periodName: input.periodName } : {}),
     },

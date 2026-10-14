@@ -36,6 +36,16 @@ import { rateLimit } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/auth";
 import { normalizeChecklist } from "@/lib/checklist";
 import {
+  parseInstance,
+  cleanEngagementName,
+  engagementHref,
+  engagementId,
+  engagementKeyString,
+  engagementLabel,
+  engagementWhere,
+  nextInstance,
+} from "@/lib/engagements";
+import {
   requireActivityAccess,
   requireAdminAction,
   requireClientAccess,
@@ -73,6 +83,7 @@ export async function updateActivityStatus(
       where: {
         clientId: activity.clientId,
         projectId: activity.projectId,
+        instance: activity.instance,
         periodName: activity.periodName,
       },
     });
@@ -109,6 +120,7 @@ export async function updateActivityStatus(
     toValue: newStatus,
     clientId: activity.clientId,
     projectId: activity.projectId,
+    instance: activity.instance,
     periodName: activity.periodName,
     contextLabel: `${activity.client.companyName} · ${activity.project.name}`,
     actor: actorFrom(user),
@@ -120,7 +132,7 @@ export async function updateActivityStatus(
   revalidatePath(`/assignments/${activity.clientId}/${activity.projectId}`);
 
   if (newStatus === "DONE") {
-    await maybeRollPeriodForward(activity.clientId, activity.projectId, activity.periodName);
+    await maybeRollPeriodForward(activity.clientId, activity.projectId, activity.periodName, activity.instance);
   }
 }
 
@@ -370,6 +382,7 @@ export async function restoreClient(clientId: string) {
     await openPeriodForAssignment({
       clientId,
       projectId: e.projectId,
+      instance: e.instance,
       periodName: today,
       project: {
         recurringId: e.project.recurringId,
@@ -380,7 +393,7 @@ export async function restoreClient(clientId: string) {
       engagementDefaultAssigneeId: e.defaultAssigneeId,
     });
     await prisma.projectClientMap.update({
-      where: { clientId_projectId: { clientId, projectId: e.projectId } },
+      where: engagementId(e),
       data: { currentPeriod: today },
     });
     resumed += 1;
@@ -462,26 +475,84 @@ export async function deleteClient(clientId: string) {
 // Mirrors the source app's TRG_PROJ_CLIENT_INSERT_SUBTASKS trigger: assigning
 // a project to a client generates one ClientActivity row per subtask in the
 // project's template, for the given accounting period. When periodName is
-// omitted, it's derived from the project's cadence (monthly/quarterly/
-// annual/one-time) relative to today, creating that period if needed.
+// omitted, it's derived from the project's cadence relative to today (or its
+// start date), creating that period if needed.
+//
+// This creates the client's FIRST engagement of the project. A second,
+// independent one ("Bookkeeping 2") is addProjectCopy below.
 export async function assignProjectToClient(
   clientId: string,
   projectId: string,
   periodName?: string
 ) {
-  await requireAdminAction();
-  const existing = await prisma.projectClientMap.findUnique({
-    where: { clientId_projectId: { clientId, projectId } },
-  });
-  if (existing) {
-    throw new Error("This client is already assigned to this project.");
+  const user = await requireAdminAction();
+  const existing = await prisma.projectClientMap.count({ where: { clientId, projectId } });
+  if (existing > 0) {
+    throw new Error(
+      "This client already has this project. Use \"Add another\" on the client's page to run a second, separate copy."
+    );
   }
+  return createEngagement({ clientId, projectId, instance: 1, name: null, periodName, actor: actorFrom(user) });
+}
 
-  const taskMaps = await prisma.projectTaskMap.findMany({
-    where: { projectId },
-    orderBy: { sequence: "asc" },
+// Another copy of a project the client already has, running completely
+// independently: its own checklist rows, periods, owner, due-date override,
+// start date, notes and files. `name` is what it's called on screen
+// ("Bookkeeping 2", "Bookkeeping — Holding LLC"); blank = "<project> <n>".
+export async function addProjectCopy(clientId: string, projectId: string, name?: string) {
+  const user = await requireAdminAction();
+  const cleanName = cleanEngagementName(name);
+  const existing = await prisma.projectClientMap.findMany({
+    where: { clientId, projectId },
+    select: { instance: true },
   });
-  if (taskMaps.length === 0) {
+  const instance = nextInstance(existing.map((e) => e.instance));
+  return createEngagement({ clientId, projectId, instance, name: cleanName, actor: actorFrom(user) });
+}
+
+// Renames one engagement. Blank goes back to the default name.
+export async function renameEngagement(clientId: string, projectId: string, instance: number, name: string) {
+  const user = await requireEngagementAccess(clientId, projectId, instance);
+  const cleanName = cleanEngagementName(name);
+  const engagement = await prisma.projectClientMap.findUniqueOrThrow({
+    where: engagementId({ clientId, projectId, instance }),
+    include: { project: { select: { name: true } }, client: { select: { companyName: true } } },
+  });
+  await prisma.projectClientMap.update({
+    where: engagementId({ clientId, projectId, instance }),
+    data: { name: cleanName },
+  });
+  const before = engagementLabel(engagement.project.name, engagement.name, instance);
+  const after = engagementLabel(engagement.project.name, cleanName, instance);
+  await recordAudit({
+    entityType: "ProjectClientMap",
+    entityId: engagementKeyString({ clientId, projectId, instance }),
+    action: AUDIT.ENGAGEMENT_RENAMED,
+    summary: `${engagement.client.companyName}: "${before}" renamed to "${after}"`,
+    fromValue: before,
+    toValue: after,
+    clientId,
+    projectId,
+    instance,
+    contextLabel: `${engagement.client.companyName} · ${after}`,
+    actor: actorFrom(user),
+  });
+  revalidateAssignment(clientId, projectId);
+  revalidatePath("/tasks");
+  revalidatePath(`/projects/${projectId}`);
+}
+
+async function createEngagement(input: {
+  clientId: string;
+  projectId: string;
+  instance: number;
+  name: string | null;
+  periodName?: string;
+  actor: { id: string; label: string };
+}) {
+  const { clientId, projectId, instance } = input;
+  const taskMaps = await prisma.projectTaskMap.count({ where: { projectId } });
+  if (taskMaps === 0) {
     throw new Error("This project has no checklist steps defined yet.");
   }
 
@@ -489,6 +560,7 @@ export async function assignProjectToClient(
     where: { id: projectId },
     include: { recurring: true },
   });
+  let periodName = input.periodName;
   if (!periodName) {
     // Today's period on the project's schedule — or, when its start date is
     // still in the future, the period that begins on that date.
@@ -500,6 +572,8 @@ export async function assignProjectToClient(
     data: {
       clientId,
       projectId,
+      instance,
+      name: input.name,
       active: true,
       createSubtask: true,
       currentPeriod: periodName,
@@ -507,13 +581,14 @@ export async function assignProjectToClient(
     },
   });
 
-  // Generated through the shared helper so due dates are resolved from the
-  // project's rule the same way the nightly job resolves them. If this throws
+  // Generated through the shared helper so due dates and assignees are
+  // resolved exactly the way the nightly job resolves them. If this throws
   // after the assignment row lands, the engagement exists with no task rows —
   // which is exactly the state the scheduler repairs on its next run.
   await openPeriodForAssignment({
     clientId,
     projectId,
+    instance,
     periodName,
     project: {
       recurringId: project.recurringId,
@@ -521,25 +596,30 @@ export async function assignProjectToClient(
       dueOffsetDays: project.dueOffsetDays,
     },
     clientOverride: null,
-    // A brand-new engagement has no default owner yet; set one on the
-    // assignment page and the next period picks it up.
+    // A brand-new engagement has no owner of its own, so the project's owner
+    // (if any) picks up every step.
     engagementDefaultAssigneeId: null,
+    projectOwnerId: project.ownerId,
+    actor: input.actor,
   });
 
   const client = await prisma.client.findUnique({
     where: { id: clientId },
     select: { companyName: true },
   });
+  const label = engagementLabel(project.name, input.name, instance);
   await recordAudit({
     entityType: "ProjectClientMap",
-    entityId: `${clientId}:${projectId}`,
+    entityId: engagementKeyString({ clientId, projectId, instance }),
     action: AUDIT.ENGAGEMENT_CREATED,
-    summary: `${client?.companyName ?? "Client"} added to ${project.name} (${periodName})`,
+    summary: `${client?.companyName ?? "Client"} added to ${label} (${formatPeriodName(periodName)})`,
     toValue: periodName,
     clientId,
     projectId,
+    instance,
     periodName,
-    contextLabel: `${client?.companyName ?? "Client"} · ${project.name}`,
+    contextLabel: `${client?.companyName ?? "Client"} · ${label}`,
+    actor: input.actor,
   });
 
   revalidatePath("/");
@@ -548,6 +628,7 @@ export async function assignProjectToClient(
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/activity");
+  return { instance, href: engagementHref({ clientId, projectId, instance }) };
 }
 
 // --- Running two periods at once ----------------------------------------------
@@ -559,10 +640,11 @@ export async function assignProjectToClient(
 //
 // Only one period ahead of the calendar: you can start next month's work
 // during this month, not three months out.
-export async function startNextPeriod(clientId: string, projectId: string) {
-  const user = await requireEngagementAccess(clientId, projectId);
+export async function startNextPeriod(clientId: string, projectId: string, instance: number = 1) {
+  const user = await requireEngagementAccess(clientId, projectId, instance);
+  const key = { clientId, projectId, instance };
   const engagement = await prisma.projectClientMap.findUniqueOrThrow({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     include: { project: { include: { recurring: true } }, client: { select: { companyName: true, archivedAt: true } } },
   });
   const type = engagement.project.recurring.type;
@@ -589,6 +671,7 @@ export async function startNextPeriod(clientId: string, projectId: string) {
   const result = await openPeriodForAssignment({
     clientId,
     projectId,
+    instance,
     periodName: next,
     project: {
       recurringId: engagement.project.recurringId,
@@ -601,7 +684,7 @@ export async function startNextPeriod(clientId: string, projectId: string) {
     actor: actorFrom(user),
   });
   await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     data: { currentPeriod: next },
   });
 
@@ -983,7 +1066,7 @@ export async function setEmployeeProjects(employeeId: string, projectIds: string
       }),
       prisma.projectClientMap.findMany({
         where: { projectId: { in: gainedIds }, defaultAssigneeId: { not: null } },
-        select: { projectId: true, clientId: true },
+        select: { projectId: true, clientId: true, instance: true },
       }),
       prisma.clientActivity.findMany({
         where: {
@@ -992,16 +1075,16 @@ export async function setEmployeeProjects(employeeId: string, projectIds: string
           status: { not: "DONE" },
           client: { archivedAt: null },
         },
-        select: { id: true, projectId: true, clientId: true, subTaskId: true },
+        select: { id: true, projectId: true, clientId: true, instance: true, subTaskId: true },
       }),
     ]);
     const stepTaken = new Set(stepDefaults.map((d) => `${d.projectId}:${d.subTaskId}`));
-    const engagementTaken = new Set(engagementDefaults.map((d) => `${d.projectId}:${d.clientId}`));
+    const engagementTaken = new Set(engagementDefaults.map((d) => engagementKeyString(d)));
     const ids = blanks
       .filter(
         (a) =>
           !stepTaken.has(`${a.projectId}:${a.subTaskId}`) &&
-          !engagementTaken.has(`${a.projectId}:${a.clientId}`)
+          !engagementTaken.has(engagementKeyString(a))
       )
       .map((a) => a.id);
     if (ids.length > 0) {
@@ -1263,10 +1346,6 @@ export async function updateProjectSubTask(subTaskId: string, data: ProjectSubTa
 
 export async function deleteProjectSubTask(subTaskId: string) {
   await requireAdmin();
-  const step = await prisma.projectSubTask.findUnique({ where: { id: subTaskId }, select: { systemKey: true } });
-  if (step?.systemKey) {
-    throw new Error("This is the universal final step every project ends with, so it can't be deleted.");
-  }
   const [inMap, inActivity] = await Promise.all([
     prisma.projectTaskMap.count({ where: { subTaskId } }),
     prisma.clientActivity.count({ where: { subTaskId } }),
@@ -1281,7 +1360,7 @@ export async function deleteProjectSubTask(subTaskId: string) {
 // --- Project task map (which subtasks belong to which project, in what order)
 
 // `position` is the step number it should become (1 = first). Steps from that
-// number on move down one, and the universal final step stays last.
+// number on move down one.
 export async function addProjectTaskMap(
   projectId: string,
   subTaskId: string,
@@ -1304,7 +1383,6 @@ export async function addProjectTaskMap(
 
 export async function removeProjectTaskMap(projectId: string, subTaskId: string) {
   await requireAdmin();
-  await assertNotUniversalStep(subTaskId);
   const inUse = await prisma.clientActivity.count({ where: { projectId, subTaskId } });
   if (inUse > 0) {
     throw new Error(
@@ -1318,12 +1396,6 @@ export async function removeProjectTaskMap(projectId: string, subTaskId: string)
   revalidateProjectBuilder(projectId);
 }
 
-async function assertNotUniversalStep(subTaskId: string) {
-  const step = await prisma.projectSubTask.findUnique({ where: { id: subTaskId }, select: { systemKey: true } });
-  if (step?.systemKey) {
-    throw new Error("Every project ends with the universal \"Completed Y/N\" step, so it can't be removed or moved.");
-  }
-}
 
 // --- Project builder (admin) --------------------------------------------------
 //
@@ -1338,9 +1410,8 @@ async function assertNotUniversalStep(subTaskId: string) {
 // clients, period rollover, admin pages) keeps working unchanged.
 //
 // Ordering: steps are numbered 1, 2, 3… and every change goes through
-// normalizeChecklist (src/lib/checklist.ts), which keeps the universal
-// "Completed Y/N" step last and renumbers the periods still in progress to
-// match. Finished periods keep the numbers they were done under.
+// normalizeChecklist (src/lib/checklist.ts), which renumbers the periods
+// still in progress to match. Finished periods keep the numbers they were done under.
 
 function revalidateProjectBuilder(projectId: string) {
   revalidatePath("/projects");
@@ -1376,7 +1447,7 @@ export async function createOwnProject(data: ProjectFormInput) {
 
 // Adds a step. `position` is the number it should become — insert between
 // steps 4 and 5 by passing 5, and the old 5 onward each move down one.
-// Omitted = the end of the list (just above the universal final step).
+// Omitted = the end of the list.
 //
 // Periods already under way get the new step too, unless their work is
 // already past that point (adding an open step in front of finished ones
@@ -1391,7 +1462,7 @@ export async function addChecklistTask(projectId: string, name: string, position
     data: { name: trimmed, taskMaps: { create: { projectId, sequence: 0 } } },
   });
   const steps = await prisma.projectTaskMap.count({
-    where: { projectId, subTask: { systemKey: null }, NOT: { subTaskId: created.id } },
+    where: { projectId, NOT: { subTaskId: created.id } },
   });
   const at = position && Number.isFinite(position) ? Math.max(1, Math.min(steps + 1, Math.trunc(position))) : steps + 1;
   const result = await normalizeChecklist(projectId, {
@@ -1417,7 +1488,6 @@ export async function addChecklistTask(projectId: string, name: string, position
 
 export async function renameChecklistTask(projectId: string, subTaskId: string, name: string) {
   await requireAdminAction();
-  await assertNotUniversalStep(subTaskId);
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Task name is required.");
 
@@ -1435,7 +1505,6 @@ export async function renameChecklistTask(projectId: string, subTaskId: string, 
 
 export async function removeChecklistTask(projectId: string, subTaskId: string) {
   await requireAdminAction();
-  await assertNotUniversalStep(subTaskId);
   const inUse = await prisma.clientActivity.count({ where: { projectId, subTaskId } });
   if (inUse > 0) {
     throw new Error("Clients already have activity on this step, so it can't be removed.");
@@ -1471,7 +1540,6 @@ export async function reorderChecklist(projectId: string, orderedSubTaskIds: str
     throw new Error("The checklist changed while you were reordering. Refresh and try again.");
   }
 
-  // The universal final step goes back to the end whatever order arrived.
   await normalizeChecklist(projectId, { orderedIds: orderedSubTaskIds });
   revalidateProjectBuilder(projectId);
   revalidatePath("/");
@@ -1630,6 +1698,7 @@ export async function setActivityAssignee(activityId: string, employeeId: string
     toValue: nextId,
     clientId: updated.clientId,
     projectId: updated.projectId,
+    instance: updated.instance,
     periodName: updated.periodName,
     actor: actorFrom(user),
   });
@@ -1655,12 +1724,13 @@ export async function bulkAssignActivities(
   projectId: string,
   periodName: string,
   employeeId: string,
-  target: BulkAssignTarget
+  target: BulkAssignTarget,
+  instance: number = 1
 ): Promise<number> {
-  const user = await requireEngagementAccess(clientId, projectId);
+  const user = await requireEngagementAccess(clientId, projectId, instance);
   const assigneeId = employeeId || null;
   await assertEmployeeExists(assigneeId);
-  const base = { clientId, projectId, periodName };
+  const base = { clientId, projectId, instance, periodName };
 
   const where =
     target.mode === "unassigned"
@@ -1692,6 +1762,7 @@ export async function bulkAssignActivities(
       toValue: assigneeId,
       clientId,
       projectId,
+      instance,
       periodName,
       actor: actorFrom(user),
     }))
@@ -1777,15 +1848,16 @@ export async function deleteClientNote(id: string) {
 export async function addAssignmentNote(
   clientId: string,
   projectId: string,
-  data: { body: string; authorId?: string }
+  data: { body: string; authorId?: string },
+  instance: number = 1
 ) {
-  const user = await requireEngagementAccess(clientId, projectId);
+  const user = await requireEngagementAccess(clientId, projectId, instance);
   const body = data.body.trim();
   if (!body) throw new Error("Note can't be empty.");
   // The author is whoever is signed in. It used to be taken from the request,
   // which let anyone post a note under a colleague's name.
   const created = await prisma.assignmentNote.create({
-    data: { clientId, projectId, body, authorId: user.id },
+    data: { clientId, projectId, instance, body, authorId: user.id },
   });
   revalidateAssignment(clientId, projectId);
   return created;
@@ -1797,10 +1869,10 @@ export async function addAssignmentNote(
 async function requireNoteOwnership(id: string) {
   const note = await prisma.assignmentNote.findUnique({
     where: { id },
-    select: { clientId: true, projectId: true, authorId: true },
+    select: { clientId: true, projectId: true, instance: true, authorId: true },
   });
   if (!note) throw new Error("That note no longer exists.");
-  const user = await requireEngagementAccess(note.clientId, note.projectId);
+  const user = await requireEngagementAccess(note.clientId, note.projectId, note.instance);
   if (user.role !== "ADMIN" && note.authorId !== user.id) {
     throw new Error("Only the person who wrote a note (or an admin) can change it.");
   }
@@ -1828,11 +1900,12 @@ export async function deleteAssignmentNote(id: string) {
 export async function uploadDocument(formData: FormData) {
   const clientId = String(formData.get("clientId") ?? "");
   const projectId = String(formData.get("projectId") ?? "");
+  const instance = parseInstance(String(formData.get("instance") ?? "1"));
   const periodName = String(formData.get("periodName") ?? "") || null;
   const file = formData.get("file");
 
   if (!clientId || !projectId) throw new Error("Missing engagement reference.");
-  const user = await requireEngagementAccess(clientId, projectId);
+  const user = await requireEngagementAccess(clientId, projectId, instance);
   // Recorded from the session, not the form — see addAssignmentNote.
   const uploadedById = user.id;
   if (!(file instanceof File) || file.size === 0) {
@@ -1851,6 +1924,7 @@ export async function uploadDocument(formData: FormData) {
       summary: `Refused an upload named "${named.filename}": ${verdict.reason}`,
       clientId,
       projectId,
+      instance,
       periodName,
       actor: actorFrom(user),
     });
@@ -1865,6 +1939,7 @@ export async function uploadDocument(formData: FormData) {
         id,
         clientId,
         projectId,
+        instance,
         periodName,
         uploadedById,
         filename: verdict.filename,
@@ -1885,6 +1960,7 @@ export async function uploadDocument(formData: FormData) {
     summary: `Uploaded "${verdict.filename}"`,
     clientId,
     projectId,
+    instance,
     periodName,
     actor: actorFrom(user),
   });
@@ -1896,10 +1972,10 @@ export async function uploadDocument(formData: FormData) {
 export async function deleteDocument(id: string) {
   const existing = await prisma.document.findUnique({
     where: { id },
-    select: { clientId: true, projectId: true },
+    select: { clientId: true, projectId: true, instance: true },
   });
   if (!existing) throw new Error("That file no longer exists.");
-  const user = await requireEngagementAccess(existing.clientId, existing.projectId);
+  const user = await requireEngagementAccess(existing.clientId, existing.projectId, existing.instance);
   const doc = await prisma.document.delete({ where: { id } });
   await objectStore.remove(doc.bucket, doc.storageKey).catch((err) => {
     console.error(`[documents] deleted row ${doc.id} but couldn't remove its object; its key is already destroyed`, err);
@@ -1911,6 +1987,7 @@ export async function deleteDocument(id: string) {
     summary: `Deleted "${doc.filename}"`,
     clientId: doc.clientId,
     projectId: doc.projectId,
+    instance: doc.instance,
     periodName: doc.periodName,
     actor: actorFrom(user),
   });
@@ -1933,6 +2010,7 @@ export async function deleteDocument(id: string) {
 async function recomputeDueDates(scope: {
   projectId: string;
   clientId?: string;
+  instance?: number;
 }): Promise<number> {
   const project = await prisma.project.findUnique({
     where: { id: scope.projectId },
@@ -1946,16 +2024,21 @@ async function recomputeDueDates(scope: {
       select: { subTaskId: true, dueOffsetDays: true },
     }),
     prisma.projectClientMap.findMany({
-      where: { projectId: scope.projectId, ...(scope.clientId ? { clientId: scope.clientId } : {}) },
-      select: { clientId: true, dueOffsetDays: true },
+      where: {
+        projectId: scope.projectId,
+        ...(scope.clientId ? { clientId: scope.clientId } : {}),
+        ...(scope.instance ? { instance: scope.instance } : {}),
+      },
+      select: { clientId: true, instance: true, dueOffsetDays: true },
     }),
     prisma.clientActivity.findMany({
       where: {
         projectId: scope.projectId,
         ...(scope.clientId ? { clientId: scope.clientId } : {}),
+        ...(scope.instance ? { instance: scope.instance } : {}),
         dueDateOverridden: false,
       },
-      select: { id: true, clientId: true, subTaskId: true, periodName: true, dueDate: true },
+      select: { id: true, clientId: true, instance: true, subTaskId: true, periodName: true, dueDate: true },
     }),
   ]);
   if (activities.length === 0) return 0;
@@ -1965,13 +2048,14 @@ async function recomputeDueDates(scope: {
     select: { name: true, endDate: true },
   });
   const periodEnd = new Map(periods.map((p) => [p.name, p.endDate]));
-  const overrideByClient = new Map(assignments.map((a) => [a.clientId, a.dueOffsetDays]));
+  // Each copy of the project has its own override, so key by engagement.
+  const overrideByClient = new Map(assignments.map((a) => [`${a.clientId}:${a.instance}`, a.dueOffsetDays]));
 
   // One resolve per (client, period) pair rather than per row — a firm with
   // 400 engagements on a 12-step checklist is 4,800 rows but only 400 pairs.
   const resolved = new Map<string, Map<string, Date>>();
-  function datesFor(clientId: string, periodName: string): Map<string, Date> | null {
-    const key = `${clientId}:${periodName}`;
+  function datesFor(clientId: string, instance: number, periodName: string): Map<string, Date> | null {
+    const key = `${clientId}:${instance}:${periodName}`;
     const hit = resolved.get(key);
     if (hit) return hit;
     const end = periodEnd.get(periodName);
@@ -1979,7 +2063,7 @@ async function recomputeDueDates(scope: {
     const map = resolveStepDueDates({
       periodEnd: end,
       projectOffset: project!.dueOffsetDays,
-      clientOverride: overrideByClient.get(clientId) ?? null,
+      clientOverride: overrideByClient.get(`${clientId}:${instance}`) ?? null,
       steps: taskMaps.map((tm) => ({ subTaskId: tm.subTaskId, dueOffsetDays: tm.dueOffsetDays })),
     });
     resolved.set(key, map);
@@ -1990,7 +2074,7 @@ async function recomputeDueDates(scope: {
   // query per row.
   const byDate = new Map<number, string[]>();
   for (const a of activities) {
-    const next = datesFor(a.clientId, a.periodName)?.get(a.subTaskId);
+    const next = datesFor(a.clientId, a.instance, a.periodName)?.get(a.subTaskId);
     if (!next) continue;
     if (a.dueDate && a.dueDate.getTime() === next.getTime()) continue;
     const key = next.getTime();
@@ -2068,16 +2152,22 @@ export async function setProjectRecurrenceAnchor(projectId: string, value: strin
 }
 
 // One client's own start date. "" goes back to the project's.
-export async function setAssignmentRecurrenceAnchor(clientId: string, projectId: string, value: string) {
-  const user = await requireEngagementAccess(clientId, projectId);
+export async function setAssignmentRecurrenceAnchor(
+  clientId: string,
+  projectId: string,
+  value: string,
+  instance: number = 1
+) {
+  const user = await requireEngagementAccess(clientId, projectId, instance);
+  const key = { clientId, projectId, instance };
   const engagement = await prisma.projectClientMap.findUniqueOrThrow({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     include: { project: { include: { recurring: true } }, client: { select: { companyName: true } } },
   });
   const type = engagement.project.recurring.type;
   const anchor = parseAnchorInput(value, type);
   await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     data: { recurrenceAnchor: anchor },
   });
   const next =
@@ -2086,16 +2176,17 @@ export async function setAssignmentRecurrenceAnchor(clientId: string, projectId:
       : null;
   await recordAudit({
     entityType: "ProjectClientMap",
-    entityId: `${clientId}:${projectId}`,
+    entityId: engagementKeyString(key),
     action: AUDIT.SCHEDULE_CHANGED,
     summary: anchor
-      ? `${engagement.client.companyName}'s ${engagement.project.name} now recurs from ${isoDate(anchor)}`
-      : `${engagement.client.companyName}'s ${engagement.project.name} follows the project's start date again`,
+      ? `${engagement.client.companyName}'s ${engagementLabel(engagement.project.name, engagement.name, instance)} now recurs from ${isoDate(anchor)}`
+      : `${engagement.client.companyName}'s ${engagementLabel(engagement.project.name, engagement.name, instance)} follows the project's start date again`,
     fromValue: describeAnchorForAudit(engagement.recurrenceAnchor),
     toValue: describeAnchorForAudit(anchor),
     clientId,
     projectId,
-    contextLabel: `${engagement.client.companyName} · ${engagement.project.name}`,
+    instance,
+    contextLabel: `${engagement.client.companyName} · ${engagementLabel(engagement.project.name, engagement.name, instance)}`,
     actor: actorFrom(user),
   });
   revalidateAssignment(clientId, projectId);
@@ -2126,15 +2217,16 @@ export async function setChecklistTaskDueOffset(
 export async function setAssignmentDueOffset(
   clientId: string,
   projectId: string,
-  offsetDays: number | null
+  offsetDays: number | null,
+  instance: number = 1
 ) {
-  await requireEngagementAccess(clientId, projectId);
+  await requireEngagementAccess(clientId, projectId, instance);
   if (offsetDays !== null) assertOffsetInRange(offsetDays);
   await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId({ clientId, projectId, instance }),
     data: { dueOffsetDays: offsetDays === null ? null : clampOffset(offsetDays) },
   });
-  const updated = await recomputeDueDates({ projectId, clientId });
+  const updated = await recomputeDueDates({ projectId, clientId, instance });
   revalidatePath("/");
   revalidatePath("/tasks");
   revalidatePath(`/assignments/${clientId}/${projectId}`);
@@ -2153,7 +2245,11 @@ export async function setActivityDueDate(activityId: string, date: string | null
       where: { id: activityId },
       data: { dueDateOverridden: false },
     });
-    await recomputeDueDates({ clientId: activity.clientId, projectId: activity.projectId });
+    await recomputeDueDates({
+      clientId: activity.clientId,
+      projectId: activity.projectId,
+      instance: activity.instance,
+    });
   } else {
     // A yyyy-mm-dd string from a date input is parsed as UTC midnight by the
     // Date constructor, which lands on the previous day west of Greenwich.
@@ -2251,30 +2347,56 @@ export async function setStepDefaultAssignee(
   revalidatePath("/activity");
 }
 
+// The person responsible for this client's copy of the project. They (or,
+// when it's cleared, the project's owner) can see the whole engagement, every
+// period from here on is pre-assigned to them, and open tasks that nobody has
+// yet are handed to them now. Tasks someone already has don't move.
 export async function setEngagementDefaultAssignee(
   clientId: string,
   projectId: string,
-  employeeId: string | null
+  employeeId: string | null,
+  instance: number = 1
 ) {
-  const user = await requireEngagementAccess(clientId, projectId);
+  const user = await requireEngagementAccess(clientId, projectId, instance);
   await assertEmployeeExists(employeeId || null);
+  const key = { clientId, projectId, instance };
   const assignment = await prisma.projectClientMap.findUniqueOrThrow({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     include: { defaultAssignee: true, client: true, project: true },
   });
 
   const nextId = employeeId || null;
-  if (assignment.defaultAssigneeId === nextId) return;
+  if (assignment.defaultAssigneeId === nextId) return { filled: 0 };
 
   const updated = await prisma.projectClientMap.update({
-    where: { clientId_projectId: { clientId, projectId } },
+    where: engagementId(key),
     data: { defaultAssigneeId: nextId },
     include: { defaultAssignee: true },
   });
 
+  // Fill the blanks with whoever is now responsible.
+  const responsible = nextId ?? assignment.project.ownerId;
+  let filled = 0;
+  if (responsible) {
+    const stepOwned = await prisma.projectTaskMap.findMany({
+      where: { projectId, defaultAssigneeId: { not: null } },
+      select: { subTaskId: true },
+    });
+    const res = await prisma.clientActivity.updateMany({
+      where: {
+        ...engagementWhere(key),
+        assigneeId: null,
+        status: { not: "DONE" },
+        subTaskId: { notIn: stepOwned.map((s) => s.subTaskId) },
+      },
+      data: { assigneeId: responsible },
+    });
+    filled = res.count;
+  }
+
   await recordAudit({
     entityType: "ProjectClientMap",
-    entityId: `${clientId}:${projectId}`,
+    entityId: engagementKeyString(key),
     action: AUDIT.DEFAULT_ASSIGNEE_CHANGED,
     summary: `Engagement owner: ${employeeName(assignment.defaultAssignee)} → ${employeeName(
       updated.defaultAssignee
@@ -2283,12 +2405,15 @@ export async function setEngagementDefaultAssignee(
     toValue: nextId,
     clientId,
     projectId,
-    contextLabel: `${assignment.client.companyName} · ${assignment.project.name}`,
+    instance,
+    contextLabel: `${assignment.client.companyName} · ${engagementLabel(assignment.project.name, assignment.name, instance)}`,
     actor: actorFrom(user),
   });
 
   revalidateAssignment(clientId, projectId);
   revalidatePath("/activity");
+  revalidatePath("/tasks");
+  return { filled };
 }
 
 // Pushes the resolved defaults onto one period's rows. Only touches steps that
@@ -2298,13 +2423,14 @@ export async function setEngagementDefaultAssignee(
 export async function applyDefaultAssignees(
   clientId: string,
   projectId: string,
-  periodName: string
+  periodName: string,
+  instance: number = 1
 ): Promise<number> {
-  const user = await requireEngagementAccess(clientId, projectId);
+  const user = await requireEngagementAccess(clientId, projectId, instance);
 
   const [assignment, taskMaps, unassigned] = await Promise.all([
     prisma.projectClientMap.findUniqueOrThrow({
-      where: { clientId_projectId: { clientId, projectId } },
+      where: engagementId({ clientId, projectId, instance }),
       select: { defaultAssigneeId: true, project: { select: { ownerId: true } } },
     }),
     prisma.projectTaskMap.findMany({
@@ -2312,7 +2438,7 @@ export async function applyDefaultAssignees(
       select: { subTaskId: true, defaultAssigneeId: true },
     }),
     prisma.clientActivity.findMany({
-      where: { clientId, projectId, periodName, assigneeId: null },
+      where: { clientId, projectId, instance, periodName, assigneeId: null },
       include: { subTask: { select: { name: true } } },
     }),
   ]);
@@ -2360,6 +2486,7 @@ export async function applyDefaultAssignees(
       toValue: u.assigneeId,
       clientId,
       projectId,
+      instance,
       periodName,
       actor: actorFrom(user),
     }))
@@ -2472,6 +2599,7 @@ export async function setActivityEstimate(activityId: string, minutes: number | 
     toValue: value === null ? null : String(value),
     clientId: before.clientId,
     projectId: before.projectId,
+    instance: before.instance,
     periodName: before.periodName,
     contextLabel: `${before.client.companyName} · ${before.project.name}`,
     actor: actorFrom(user),

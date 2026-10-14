@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { addProjectTaskMap, removeProjectTaskMap } from "@/lib/actions";
 
-type Step = { subTaskId: string; name: string; sequence: number; universal: boolean };
+type Step = { subTaskId: string; name: string; sequence: number };
 type SubTaskOption = { id: string; name: string };
 
 const inputClass =
@@ -23,9 +23,9 @@ export function ProjectTaskMapEditor({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [subTaskId, setSubTaskId] = useState("");
-  // The step number the new task will take. Defaults to the end of the list
-  // (just above the universal final step); type 5 to insert between 4 and 5.
-  const lastPosition = steps.filter((s) => !s.universal).length + 1;
+  // The step number the new task will take. Defaults to the end of the list;
+  // type 5 to insert between 4 and 5.
+  const lastPosition = steps.length + 1;
   const [sequence, setSequence] = useState(String(lastPosition));
 
   const usedIds = new Set(steps.map((s) => s.subTaskId));
@@ -70,17 +70,13 @@ export function ProjectTaskMapEditor({
               <span className="tabular mr-2 text-xs text-ink-muted">{s.sequence}</span>
               {s.name}
             </span>
-            {s.universal ? (
-              <span className="text-[10px] font-medium text-accent">Every project</span>
-            ) : (
-              <button
-                onClick={() => handleRemove(s.subTaskId)}
-                disabled={isPending}
-                className="text-xs text-ink-muted hover:text-overdue disabled:opacity-50"
-              >
-                Remove
-              </button>
-            )}
+            <button
+              onClick={() => handleRemove(s.subTaskId)}
+              disabled={isPending}
+              className="text-xs text-ink-muted hover:text-overdue disabled:opacity-50"
+            >
+              Remove
+            </button>
           </li>
         ))}
         {steps.length === 0 && (

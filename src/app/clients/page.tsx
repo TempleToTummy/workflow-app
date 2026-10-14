@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { visibleScope } from "@/lib/access";
 import { FilterBar } from "@/components/filter-bar";
 import { ClientsTable } from "@/components/clients-table";
 import { clientGroupNames, visibleTags } from "@/lib/client-options";
@@ -13,7 +14,9 @@ export default async function ClientsPage({
   searchParams: Promise<{ [key: string]: string | undefined }>;
 }) {
   const user = await requireUser();
-  const mine = assigneeScope(user);
+  // Clients this person is on (src/lib/access.ts). null = admin, everyone.
+  const scope = await visibleScope(user);
+  const mine = scope !== null;
   const isAdmin = user.role === "ADMIN";
   const params = await searchParams;
   // Archived clients are an admin concern (restoring, deleting); an employee's
@@ -30,7 +33,7 @@ export default async function ClientsPage({
       where: {
         archivedAt: showArchived ? { not: null } : null,
         // Employees see only clients they have a task on.
-        ...(mine ? { activities: { some: { assigneeId: mine } } } : {}),
+        ...(scope ? { id: { in: [...scope.clientIds] } } : {}),
       },
       include: { businessType: true, tags: { include: { tag: true } } },
       orderBy: { companyName: "asc" },

@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import { assigneeScope, type CurrentUser } from "@/lib/auth";
+import type { CurrentUser } from "@/lib/auth";
+import { canSee, visibleScope } from "@/lib/access";
+import { engagementLabel, projectRef } from "@/lib/engagements";
 import type { ComposerClient, ComposerTemplate } from "@/components/email-composer";
 
 // Read helpers shared by the Email pages. Kept out of email-actions.ts because
@@ -7,14 +9,13 @@ import type { ComposerClient, ComposerTemplate } from "@/components/email-compos
 // server action, and these are plain server-side reads.
 
 // Which clients a user may correspond with. Employees are limited to clients
-// they have a task on, matching assigneeScope() everywhere else in the app —
-// otherwise the compose screen's client list would leak the whole book of
-// business through a dropdown.
+// they're on (src/lib/access.ts) — otherwise the compose screen's client list
+// would leak the whole book of business through a dropdown.
 export async function composerClients(user: CurrentUser): Promise<ComposerClient[]> {
-  const mine = assigneeScope(user);
+  const scope = await visibleScope(user);
 
   const clients = await prisma.client.findMany({
-    where: { archivedAt: null, ...(mine ? { activities: { some: { assigneeId: mine } } } : {}) },
+    where: { archivedAt: null, ...(scope ? { id: { in: [...scope.clientIds] } } : {}) },
     include: {
       contacts: true,
       projectAssignments: {
@@ -38,11 +39,14 @@ export async function composerClients(user: CurrentUser): Promise<ComposerClient
         email: c.email!,
         firstName: c.firstName,
       })),
-    projects: client.projectAssignments.map((a) => ({
-      id: a.projectId,
-      name: a.project.name,
-      currentPeriod: a.currentPeriod,
-    })),
+    // One option per engagement: a client running a project twice gets both.
+    projects: client.projectAssignments
+      .filter((a) => canSee(scope, a))
+      .map((a) => ({
+        id: projectRef(a.projectId, a.instance),
+        name: engagementLabel(a.project.name, a.name, a.instance),
+        currentPeriod: a.currentPeriod,
+      })),
   }));
 }
 
@@ -54,15 +58,12 @@ export async function composerTemplates(): Promise<ComposerTemplate[]> {
   return templates;
 }
 
-// The Prisma `where` restricting an employee to messages about engagements
-// they work on. Admins get no restriction.
-export function messageScope(user: CurrentUser) {
-  const mine = assigneeScope(user);
-  if (!mine) return {};
+// The Prisma `where` restricting an employee to messages they sent or about
+// clients they're on. Admins get no restriction.
+export async function messageScope(user: CurrentUser) {
+  const scope = await visibleScope(user);
+  if (!scope) return {};
   return {
-    OR: [
-      { sentById: mine },
-      { client: { activities: { some: { assigneeId: mine } } } },
-    ],
+    OR: [{ sentById: user.id }, { clientId: { in: [...scope.clientIds] } }],
   };
 }

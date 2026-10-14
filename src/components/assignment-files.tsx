@@ -17,11 +17,14 @@ export type FileRow = {
 export function AssignmentFiles({
   clientId,
   projectId,
+  instance = 1,
   periodName,
   documents,
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   periodName: string | null;
   documents: FileRow[];
 }) {
@@ -37,6 +40,7 @@ export function AssignmentFiles({
     const data = new FormData(form);
     data.set("clientId", clientId);
     data.set("projectId", projectId);
+    data.set("instance", String(instance));
     if (periodName) data.set("periodName", periodName);
     startTransition(async () => {
       try {

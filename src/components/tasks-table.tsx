@@ -22,7 +22,10 @@ export type TaskRow = {
   href: string;
   step: string;
   status: ActivityStatus;
+  // The person responsible for the engagement (project level).
   assigneeName: string;
+  // Set when this one step is individually assigned to somebody else.
+  stepAssigneeName?: string | null;
   dueDate: string | null;
   dueOverridden: boolean;
   urgency: "overdue" | "soon" | "normal";
@@ -156,7 +159,7 @@ export function TasksTable({
               <th className="px-4 py-3 font-medium">Project</th>
               <th className="px-4 py-3 font-medium">Step</th>
               <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Assignee</th>
+              <th className="px-4 py-3 font-medium">Assigned to</th>
               <th className="px-4 py-3 font-medium">Due</th>
             </tr>
           </thead>
@@ -199,7 +202,12 @@ export function TasksTable({
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-medium text-accent">
                       {initials(r.assigneeName)}
                     </span>
-                    {r.assigneeName}
+                    <span>
+                      {r.assigneeName}
+                      {r.stepAssigneeName && (
+                        <span className="block text-[11px] text-ink-muted">step: {r.stepAssigneeName}</span>
+                      )}
+                    </span>
                   </div>
                 </td>
                 <td

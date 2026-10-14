@@ -160,8 +160,8 @@ export async function mentionCandidates() {
 export async function canSeeActivity(user: CurrentUser, activityId: string): Promise<boolean> {
   const activity = await prisma.clientActivity.findUnique({
     where: { id: activityId },
-    select: { clientId: true, projectId: true },
+    select: { clientId: true, projectId: true, instance: true },
   });
   if (!activity) return false;
-  return canAccessEngagement(user, activity.clientId, activity.projectId);
+  return canAccessEngagement(user, activity.clientId, activity.projectId, activity.instance);
 }

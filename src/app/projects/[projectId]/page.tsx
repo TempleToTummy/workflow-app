@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { StatusBadge } from "@/components/status-badge";
 import { deriveAssignmentStatus, progressLabel } from "@/lib/workflow";
 import { formatDueDate, dueDateUrgency } from "@/lib/dates";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canSee, visibleScope } from "@/lib/access";
+import { engagementHref, engagementKeyString, engagementLabel } from "@/lib/engagements";
 import { ProjectChecklistBuilder } from "@/components/project-checklist-builder";
 import { ProjectDueRule } from "@/components/project-due-rule";
 import { describeDueRule, describeRecurrenceVsDue, describeStepOffset } from "@/lib/due-dates";
@@ -18,18 +20,18 @@ export default async function ProjectDetailPage({
   params: Promise<{ projectId: string }>;
 }) {
   const user = await requireUser();
-  const mine = assigneeScope(user);
   const { projectId } = await params;
 
-  if (mine) {
-    const onIt = await prisma.clientActivity.count({ where: { projectId, assigneeId: mine } });
-    if (onIt === 0) redirect("/projects");
-  }
+  // Project-level visibility: anyone on at least one client's copy of this
+  // project can open it, and sees those clients (src/lib/access.ts).
+  const scope = await visibleScope(user);
+  if (scope && !scope.projectIds.has(projectId)) redirect("/projects");
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: {
       recurring: true,
+      owner: true,
       subtasks: { include: { subTask: true }, orderBy: { sequence: "asc" } },
     },
   });
@@ -38,12 +40,14 @@ export default async function ProjectDetailPage({
   const [assignments, activities, periods, employees] = await Promise.all([
     prisma.projectClientMap.findMany({
       where: { projectId, active: true, client: { archivedAt: null } },
-      include: { client: true },
+      include: { client: true, defaultAssignee: true },
+      orderBy: { instance: "asc" },
     }),
     prisma.clientActivity.findMany({
       where: { projectId, client: { archivedAt: null } },
       select: {
         clientId: true,
+        instance: true,
         periodName: true,
         status: true,
         taskSeqNo: true,
@@ -68,16 +72,16 @@ export default async function ProjectDetailPage({
     dueOffsetDays: tm.dueOffsetDays,
     estimatedMinutes: tm.estimatedMinutes,
     defaultAssigneeId: tm.defaultAssigneeId,
-    universal: Boolean(tm.subTask.systemKey),
   }));
 
   const rows = assignments
-    // Employees only see the clients whose work on this project is theirs.
-    .filter((a) => !mine || activities.some((act) => act.clientId === a.clientId && act.assigneeId === mine))
+    // Employees only see the client engagements they're on.
+    .filter((a) => canSee(scope, a))
     .map((a) => {
       const acts = activities.filter(
-        (act) => act.clientId === a.clientId && act.periodName === a.currentPeriod
+        (act) => act.clientId === a.clientId && act.instance === a.instance && act.periodName === a.currentPeriod
       );
+      const responsible = a.defaultAssignee ?? project.owner;
       // Next thing owed on this engagement: the earliest open step's deadline,
       // falling back to the period end for pre-due-date rows.
       const openDated = acts.filter((act) => act.status !== "DONE" && act.dueDate);
@@ -88,8 +92,15 @@ export default async function ProjectDetailPage({
           ? periodByName.get(a.currentPeriod)?.endDate
           : null) ?? null;
       return {
+        key: engagementKeyString(a),
+        href: engagementHref(a),
         clientId: a.clientId,
         clientName: a.client.companyName,
+        // Shown when this client runs the project more than once, or a copy
+        // has its own name.
+        copyName:
+          a.instance > 1 || a.name ? engagementLabel(project.name, a.name, a.instance) : null,
+        responsibleName: responsible ? `${responsible.firstName} ${responsible.lastName}` : null,
         period: a.currentPeriod,
         status: deriveAssignmentStatus(acts),
         progress: progressLabel(acts),
@@ -198,6 +209,7 @@ export default async function ProjectDetailPage({
           <thead>
             <tr className="border-b border-line bg-black/[0.02] text-xs uppercase tracking-wide text-ink-muted">
               <th className="px-4 py-3 font-medium">Client</th>
+              <th className="px-4 py-3 font-medium">Assigned to</th>
               <th className="px-4 py-3 font-medium">Period</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Progress</th>
@@ -209,17 +221,16 @@ export default async function ProjectDetailPage({
               const urgency = dueDateUrgency(r.dueDate, r.status);
               return (
                 <tr
-                  key={r.clientId}
+                  key={r.key}
                   className="border-b border-line last:border-0 hover:bg-black/[0.015]"
                 >
                   <td className="px-4 py-4 align-middle">
-                    <Link
-                      href={`/assignments/${r.clientId}/${projectId}`}
-                      className="font-medium text-ink hover:text-accent"
-                    >
+                    <Link href={r.href} className="font-medium text-ink hover:text-accent">
                       {r.clientName}
                     </Link>
+                    {r.copyName && <span className="block text-xs text-ink-muted">{r.copyName}</span>}
                   </td>
+                  <td className="px-4 py-4 align-middle text-ink-muted">{r.responsibleName ?? "—"}</td>
                   <td className="tabular px-4 py-4 align-middle text-ink-muted">
                     {r.period ? formatPeriodName(r.period) : "—"}
                   </td>
@@ -245,7 +256,7 @@ export default async function ProjectDetailPage({
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-ink-muted">
+                <td colSpan={6} className="px-4 py-10 text-center text-ink-muted">
                   No clients are on this project yet.
                 </td>
               </tr>

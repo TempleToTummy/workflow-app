@@ -4,17 +4,21 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { startNextPeriod } from "@/lib/actions";
 import { formatPeriodName } from "@/lib/period-names";
+import { engagementHref } from "@/lib/engagements";
 
 // "Start next period now": opens the next period early so its work can begin
 // while this one is still being finished. Both stay open until each is done.
 export function StartNextPeriod({
   clientId,
   projectId,
+  instance = 1,
   nextPeriod,
   currentDone,
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   nextPeriod: string;
   currentDone: boolean;
 }) {
@@ -35,8 +39,8 @@ export function StartNextPeriod({
     setError(null);
     startTransition(async () => {
       try {
-        await startNextPeriod(clientId, projectId);
-        router.push(`/assignments/${clientId}/${projectId}`);
+        await startNextPeriod(clientId, projectId, instance);
+        router.push(engagementHref({ clientId, projectId, instance }));
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't start the next period.");

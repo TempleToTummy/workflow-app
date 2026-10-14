@@ -12,7 +12,10 @@ import {
   DUE_FILTERS,
   type DueFilter,
 } from "@/lib/dates";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canSee, visibleScope } from "@/lib/access";
+import { formatPeriodName } from "@/lib/period-names";
+import { engagementHref, engagementKeyString, engagementLabel } from "@/lib/engagements";
 import { ensurePeriodsCurrent } from "@/lib/scheduler";
 import { clientGroupNames, visibleTags, savedViewsFor } from "@/lib/client-options";
 import { matchesClientFilters } from "@/lib/client-filters";
@@ -36,7 +39,11 @@ export default async function DashboardPage({
   // case running locally), open any periods that are due before we read. No-op
   // and one indexed query when cron is healthy. PERIOD_AUTOGEN=off disables it.
   await ensurePeriodsCurrent();
-  const mine = assigneeScope(user);
+  // Project-level visibility: an employee sees every engagement they're
+  // responsible for or have a task in — the whole engagement, not just their
+  // own steps (src/lib/access.ts). null = admin, everything.
+  const scope = await visibleScope(user);
+  const mine = scope !== null;
   const params = await searchParams;
   const statusFilter = params.status as ActivityStatus | undefined;
   const clientFilter = params.clientId;
@@ -56,7 +63,11 @@ export default async function DashboardPage({
     // are off the board entirely (they're under Clients → Archived).
     prisma.projectClientMap.findMany({
       where: { client: { archivedAt: null } },
-      include: { client: { include: { tags: { select: { tagId: true } } } }, project: true },
+      include: {
+        client: { include: { tags: { select: { tagId: true } } } },
+        project: { include: { owner: true } },
+        defaultAssignee: true,
+      },
     }),
     prisma.clientActivity.findMany({
       where: { client: { archivedAt: null } },
@@ -67,7 +78,7 @@ export default async function DashboardPage({
       // The Client chip must not list clients an employee can't see.
       where: {
         archivedAt: null,
-        ...(mine ? { activities: { some: { assigneeId: mine } } } : {}),
+        ...(scope ? { id: { in: [...scope.clientIds] } } : {}),
       },
       orderBy: { companyName: "asc" },
     }),
@@ -78,32 +89,32 @@ export default async function DashboardPage({
   ]);
 
   const periodByName = new Map(periods.map((p) => [p.name, p]));
-  const assignmentByKey = new Map(assignments.map((a) => [`${a.clientId}:${a.projectId}`, a]));
+  const assignmentByKey = new Map(assignments.map((a) => [engagementKeyString(a), a]));
 
-  // One dashboard row per client + project + period. A finished period stays
-  // on the board as its own completed row; the period that rolled forward is
-  // a separate, fresh row. Nothing is reset or overwritten by rollover.
-  const groups = new Map<string, typeof allActivities>();
-  for (const act of allActivities) {
-    const key = `${act.clientId}:${act.projectId}:${act.periodName}`;
-    const list = groups.get(key);
-    if (list) list.push(act);
-    else groups.set(key, [act]);
-  }
+  // One dashboard row per engagement + period. An engagement is one copy of a
+  // project for one client — a client running "Bookkeeping" twice has two
+  // rows. A finished period stays on the board as its own completed row; the
+  // period that rolled forward is a separate, fresh row.
+  const groups = new Map<string, { engagement: string; periodName: string; acts: typeof allActivities }>();
+  const groupFor = (engagement: string, periodName: string) => {
+    const key = `${engagement}\u0000${periodName}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { engagement, periodName, acts: [] }));
+    return g;
+  };
+  for (const act of allActivities) groupFor(engagementKeyString(act), act.periodName).acts.push(act);
   // An engagement whose current period has no task rows yet still shows up.
   for (const a of assignments) {
-    if (!a.currentPeriod) continue;
-    const key = `${a.clientId}:${a.projectId}:${a.currentPeriod}`;
-    if (!groups.has(key)) groups.set(key, []);
+    if (a.currentPeriod) groupFor(engagementKeyString(a), a.currentPeriod);
   }
 
-  const visible = [...groups.entries()]
-    .flatMap(([key, acts]) => {
-      const [clientId, projectId, periodName] = key.split(":");
-      const a = assignmentByKey.get(`${clientId}:${projectId}`);
+  const visible = [...groups.values()]
+    .flatMap(({ engagement, periodName, acts }) => {
+      const a = assignmentByKey.get(engagement);
       if (!a) return [];
-      // Employees only see periods where at least one step is theirs.
-      if (mine && !acts.some((act) => act.assigneeId === mine)) return [];
+      const { clientId, projectId, instance } = a;
+      // Employees see the engagements they're on — every step of them.
+      if (!canSee(scope, a)) return [];
       const status = deriveAssignmentStatus(acts);
       const completed = acts.length > 0 && status === "DONE";
       const isCurrent = a.currentPeriod === periodName;
@@ -123,28 +134,30 @@ export default async function DashboardPage({
           : periodByName.get(periodName)?.endDate) ?? null;
       const doneCount = acts.filter((act) => act.status === "DONE").length;
       const totalCount = acts.length;
-      const base = `/assignments/${clientId}/${projectId}`;
+      // Who's responsible is decided at the project level: this engagement's
+      // owner, else the project's owner. A step-level assignee is only the
+      // fallback when nobody owns the engagement.
+      const responsible = a.defaultAssignee ?? a.project.owner ?? activeTask?.assignee ?? null;
       return [
         {
           clientId,
           projectId,
+          instance,
           periodName,
           isCurrent,
           completed,
-          href: isCurrent ? base : `${base}?period=${encodeURIComponent(periodName)}`,
+          href: engagementHref(a, { period: isCurrent ? null : periodName }),
           clientName: a.client.companyName,
           groupName: a.client.groupName,
           tagIds: a.client.tags.map((t) => t.tagId),
-          projectName: a.project.name,
+          projectName: engagementLabel(a.project.name, a.name, instance),
           period: periodName,
           status,
           progress: progressLabel(acts),
           progressPct: totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0,
           dueDate,
-          assigneeName: activeTask?.assignee
-            ? `${activeTask.assignee.firstName} ${activeTask.assignee.lastName}`
-            : "Unassigned",
-          assigneeId: activeTask?.assigneeId ?? null,
+          assigneeName: responsible ? `${responsible.firstName} ${responsible.lastName}` : "Unassigned",
+          assigneeId: responsible?.id ?? null,
           due: dueBucket(dueDate, status),
         },
       ];
@@ -168,13 +181,13 @@ export default async function DashboardPage({
   const projectOptions = [...new Map(assignments.map((a) => [a.projectId, a.project.name]))]
     .map(([value, label]) => ({ value, label }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  const periodOptions = [...new Set([...groups.keys()].map((k) => k.split(":")[2]))]
+  const periodOptions = [...new Set([...groups.values()].map((g) => g.periodName))]
     .sort((a, b) => {
       const pa = periodByName.get(a)?.startDate.getTime() ?? 0;
       const pb = periodByName.get(b)?.startDate.getTime() ?? 0;
       return pb - pa || b.localeCompare(a);
     })
-    .map((p) => ({ value: p, label: p }));
+    .map((p) => ({ value: p, label: formatPeriodName(p) }));
 
   // Counts reflect the status/client/assignee filters but not the due filter
   // itself, so every card stays readable while one of them is active.
@@ -217,9 +230,10 @@ export default async function DashboardPage({
   const firstCompletedIndex = view === "all" ? openRows.length : -1;
 
   const tableRows: DashboardRow[] = rows.map((r) => ({
-    key: `${r.clientId}:${r.projectId}:${r.periodName}`,
+    key: `${engagementKeyString(r)}\u0000${r.periodName}`,
     clientId: r.clientId,
     projectId: r.projectId,
+    instance: r.instance,
     periodName: r.periodName,
     href: r.href,
     clientName: r.clientName,
@@ -240,7 +254,7 @@ export default async function DashboardPage({
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="mt-1 text-sm text-ink-muted">
             {mine
-              ? "Every engagement with a task assigned to you, one row per period."
+              ? "Every project you're assigned to (or have a task in), one row per period."
               : "Every client engagement, one row per period."}{" "}
             Finished periods stay on the board under Completed.
           </p>

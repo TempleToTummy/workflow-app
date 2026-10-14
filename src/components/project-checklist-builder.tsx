@@ -34,9 +34,6 @@ export type ChecklistTask = {
   // Who normally does this step, across every client on this project. Wins
   // over the engagement's default owner — it expresses a role, not ownership.
   defaultAssigneeId: string | null;
-  // The shared "Completed Y/N" step every project ends with. Always last; it
-  // can't be dragged, renamed here or removed.
-  universal: boolean;
 };
 
 export type BuilderEmployee = { id: string; name: string };
@@ -98,9 +95,7 @@ export function ProjectChecklistBuilder({
 
   const busy = isPending || drag !== null;
 
-  function commitOrder(attempt: ChecklistTask[]) {
-    // The universal final step can't be dragged above anything.
-    const next = [...attempt.filter((t) => !t.universal), ...attempt.filter((t) => t.universal)];
+  function commitOrder(next: ChecklistTask[]) {
     setOrder(next);
     setError(null);
     startTransition(async () => {
@@ -120,7 +115,7 @@ export function ProjectChecklistBuilder({
   // --- drag -------------------------------------------------------------
 
   function onHandlePointerDown(e: React.PointerEvent<HTMLButtonElement>, index: number) {
-    if (busy || e.button !== 0 || order[index]?.universal) return;
+    if (busy || e.button !== 0) return;
     const items = Array.from(
       listRef.current?.querySelectorAll<HTMLElement>("[data-task-row]") ?? []
     );
@@ -168,7 +163,7 @@ export function ProjectChecklistBuilder({
     if (!delta) return;
     e.preventDefault();
     const to = index + delta;
-    if (to < 0 || to >= order.length || order[index].universal || order[to].universal) return;
+    if (to < 0 || to >= order.length) return;
     commitOrder(moveItem(order, index, to));
   }
 
@@ -380,8 +375,7 @@ export function ProjectChecklistBuilder({
           <h2 className="text-sm font-semibold text-ink">Tasks</h2>
           <p className="text-xs text-ink-muted">
             Drag the handle to reorder, or hover between two steps to insert one there. This
-            order becomes the checklist for every client on this project. Every project ends with
-            the shared &ldquo;Completed Y/N&rdquo; step.
+            order becomes the checklist for every client on this project.
           </p>
         </div>
         <span className="tabular shrink-0 whitespace-nowrap text-xs text-ink-muted">
@@ -405,17 +399,6 @@ export function ProjectChecklistBuilder({
                   : "hover:bg-black/[0.02]"
               }`}
             >
-              {task.universal ? (
-                <span
-                  title="The shared final step. It always stays last."
-                  className="flex h-7 w-6 shrink-0 items-center justify-center text-ink-muted/60"
-                >
-                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
-                    <rect x="3.5" y="7" width="9" height="6.5" rx="1.2" />
-                    <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
-                  </svg>
-                </span>
-              ) : (
               <button
                 type="button"
                 aria-label={`Reorder "${task.name}". Drag, or use the arrow keys.`}
@@ -439,23 +422,12 @@ export function ProjectChecklistBuilder({
                   <circle cx="10.5" cy="12.5" r="1.3" />
                 </svg>
               </button>
-              )}
 
               <span className="tabular flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/5 text-xs text-ink-muted">
                 {j + 1}
               </span>
 
-              {task.universal ? (
-                <span className="flex min-w-0 flex-1 items-center gap-2 px-1 py-1 text-sm text-ink">
-                  <span className="truncate">{task.name}</span>
-                  <span
-                    title="One shared step that every project ends with. Rename it for all projects on Admin → Projects Task."
-                    className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                  >
-                    Every project
-                  </span>
-                </span>
-              ) : isEditing ? (
+              {isEditing ? (
                 <input
                   autoFocus
                   value={editName}
@@ -514,9 +486,7 @@ export function ProjectChecklistBuilder({
                 onSave={(offset) => handleOffset(task, offset)}
               />
 
-              {task.universal ? (
-                <span className="w-5 shrink-0" aria-hidden />
-              ) : task.inUse ? (
+              {task.inUse ? (
                 <span
                   title="Clients already have activity on this step, so it can't be removed."
                   className="shrink-0 rounded-full bg-black/5 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted"

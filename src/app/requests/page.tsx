@@ -4,6 +4,7 @@ import { waitingOnClients } from "@/lib/client-request-data";
 import { describeRequest } from "@/lib/client-requests";
 import { formatDate } from "@/lib/dates";
 import { ExportBar } from "@/components/export-bar";
+import { engagementHref } from "@/lib/engagements";
 
 // "What are we waiting on a client for?" — a question the app previously had
 // no way to answer at all, which is how "Document Received" sits open for
@@ -79,7 +80,7 @@ export default async function RequestsPage() {
                 <tr key={r.id} className="border-b border-line last:border-0 hover:bg-black/[0.015]">
                   <td className="px-4 py-3">
                     <Link
-                      href={`/assignments/${r.clientId}/${r.projectId}`}
+                      href={engagementHref(r)}
                       className="font-medium text-ink hover:text-accent"
                     >
                       {r.client.companyName}

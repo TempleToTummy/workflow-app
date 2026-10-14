@@ -8,6 +8,7 @@ import { requireEngagementAccess } from "@/lib/access";
 import { newToken, hashToken } from "@/lib/password";
 import { recordAudit, actorFrom, AUDIT } from "@/lib/audit";
 import { objectStore } from "@/lib/storage";
+import { engagementId, engagementLabel } from "@/lib/engagements";
 import { storeDocumentBytes } from "@/lib/document-vault";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendSystemEmail } from "@/lib/system-email";
@@ -65,6 +66,8 @@ function revalidateRequest(clientId: string, projectId: string) {
 export type CreateRequestInput = {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client. Default 1.
+  instance?: number;
   periodName?: string | null;
   // The checklist step this unblocks. Optional: a request can be raised
   // against the engagement generally.
@@ -91,16 +94,17 @@ export type CreateRequestResult = {
 async function requireRequestAccess(requestId: string) {
   const request = await prisma.clientRequest.findUnique({
     where: { id: requestId },
-    select: { clientId: true, projectId: true },
+    select: { clientId: true, projectId: true, instance: true },
   });
   if (!request) throw new Error("That request no longer exists.");
-  return requireEngagementAccess(request.clientId, request.projectId);
+  return requireEngagementAccess(request.clientId, request.projectId, request.instance);
 }
 
 export async function createClientRequest(
   input: CreateRequestInput
 ): Promise<CreateRequestResult> {
-  const user = await requireEngagementAccess(input.clientId, input.projectId);
+  const instance = input.instance ?? 1;
+  const user = await requireEngagementAccess(input.clientId, input.projectId, instance);
 
   const title = input.title.trim();
   if (!title) throw new Error("Say what you're asking the client for.");
@@ -109,7 +113,7 @@ export async function createClientRequest(
   // Read the engagement rather than trusting the ids: this also confirms the
   // client and project actually go together.
   const assignment = await prisma.projectClientMap.findUniqueOrThrow({
-    where: { clientId_projectId: { clientId: input.clientId, projectId: input.projectId } },
+    where: engagementId({ clientId: input.clientId, projectId: input.projectId, instance }),
     include: { client: true, project: true },
   });
 
@@ -124,7 +128,8 @@ export async function createClientRequest(
     if (
       !activity ||
       activity.clientId !== input.clientId ||
-      activity.projectId !== input.projectId
+      activity.projectId !== input.projectId ||
+      activity.instance !== instance
     ) {
       throw new Error("That task isn't part of this engagement.");
     }
@@ -139,6 +144,7 @@ export async function createClientRequest(
     data: {
       clientId: input.clientId,
       projectId: input.projectId,
+      instance,
       periodName: input.periodName?.trim() || assignment.currentPeriod,
       activityId,
       kind: input.kind,
@@ -163,8 +169,9 @@ export async function createClientRequest(
     toValue: input.kind,
     clientId: input.clientId,
     projectId: input.projectId,
+    instance,
     periodName: request.periodName,
-    contextLabel: `${assignment.client.companyName} · ${assignment.project.name}`,
+    contextLabel: `${assignment.client.companyName} · ${engagementLabel(assignment.project.name, assignment.name, instance)}`,
     actor: actorFrom(user),
   });
 
@@ -221,6 +228,7 @@ export async function resendClientRequest(
     summary: `Re-issued the link for "${before.title}" — the previous link stopped working`,
     clientId: before.clientId,
     projectId: before.projectId,
+    instance: before.instance,
     periodName: before.periodName,
     contextLabel: `${before.client.companyName} · ${before.project.name}`,
     actor: actorFrom(user),
@@ -260,6 +268,7 @@ export async function revokeClientRequest(requestId: string): Promise<void> {
     summary: `Revoked the client link for "${before.title}"`,
     clientId: before.clientId,
     projectId: before.projectId,
+    instance: before.instance,
     periodName: before.periodName,
     contextLabel: `${before.client.companyName} · ${before.project.name}`,
     actor: actorFrom(user),
@@ -303,7 +312,7 @@ export async function recordRequestView(token: string): Promise<void> {
 
     const request = await prisma.clientRequest.findUnique({
       where: { tokenHash: key },
-      select: { id: true, clientId: true, projectId: true, periodName: true, viewCount: true, title: true },
+      select: { id: true, clientId: true, projectId: true, instance: true, periodName: true, viewCount: true, title: true },
     });
     if (!request) return;
 
@@ -322,6 +331,7 @@ export async function recordRequestView(token: string): Promise<void> {
         summary: `Client opened the link for "${request.title}"`,
         clientId: request.clientId,
         projectId: request.projectId,
+        instance: request.instance,
         periodName: request.periodName,
         // No signed-in actor: the client is not a user of this app.
         actor: { id: null, label: "Client (via link)" },
@@ -363,6 +373,7 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
       summary: `Refused a file named "${named.filename}" sent for "${request.title}": ${verdict.reason}`,
       clientId: request.clientId,
       projectId: request.projectId,
+      instance: request.instance,
       periodName: request.periodName,
       actor: { id: null, label: "Client (via link)" },
     });
@@ -377,6 +388,7 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
         id,
         clientId: request.clientId,
         projectId: request.projectId,
+        instance: request.instance,
         // The period comes from the request, so the file lands in the right
         // period's Files tab even if the engagement has since rolled forward.
         periodName: request.periodName,
@@ -417,6 +429,7 @@ export async function submitRequestUpload(formData: FormData): Promise<UploadRes
     toValue: verdict.filename,
     clientId: request.clientId,
     projectId: request.projectId,
+    instance: request.instance,
     periodName: request.periodName,
     contextLabel: `${request.client.companyName} · ${request.project.name}`,
     actor: { id: null, label: responderName ? `${responderName} (client)` : "Client (via link)" },
@@ -480,6 +493,7 @@ export async function submitRequestDecision(input: {
     toValue: input.approved ? "approved" : "changes-requested",
     clientId: request.clientId,
     projectId: request.projectId,
+    instance: request.instance,
     periodName: request.periodName,
     contextLabel: `${request.client.companyName} · ${request.project.name}`,
     actor: { id: null, label: responderName ? `${responderName} (client)` : "Client (via link)" },

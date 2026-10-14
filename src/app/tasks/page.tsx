@@ -3,7 +3,9 @@ import { FilterBar } from "@/components/filter-bar";
 import { TasksTable, type TaskRow } from "@/components/tasks-table";
 import { SavedViewsMenu } from "@/components/saved-views-menu";
 import { dueDateUrgency, dueBucket, matchesDueFilter, DUE_FILTERS, type DueFilter } from "@/lib/dates";
-import { requireUser, assigneeScope } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canSee, visibleScope } from "@/lib/access";
+import { engagementHref, engagementKeyString, engagementLabel } from "@/lib/engagements";
 import { clientGroupNames, visibleTags, savedViewsFor } from "@/lib/client-options";
 import { matchesClientFilters } from "@/lib/client-filters";
 import type { ActivityStatus } from "@prisma/client";
@@ -16,13 +18,17 @@ export default async function TasksPage({
   searchParams: Promise<{ [key: string]: string | undefined }>;
 }) {
   const user = await requireUser();
-  const mine = assigneeScope(user);
+  // Project-level visibility: every task of every engagement this person is
+  // on — including steps assigned to someone else (src/lib/access.ts).
+  const scope = await visibleScope(user);
+  const mine = scope !== null;
   const params = await searchParams;
   const statusFilter = params.status as ActivityStatus | undefined;
   const clientFilter = params.clientId;
   const projectFilter = params.projectId;
-  // Employees are pinned to their own tasks; the assignee chip is hidden.
-  const assigneeFilter = mine ?? params.assigneeId;
+  // "Assigned to" matches the person responsible for the engagement, or the
+  // person a step is individually assigned to.
+  const assigneeFilter = params.assigneeId;
   const dueFilter = (DUE_FILTERS as readonly string[]).includes(params.due ?? "")
     ? (params.due as DueFilter)
     : null;
@@ -32,7 +38,10 @@ export default async function TasksPage({
     // Archived clients are off the books: their work doesn't appear here.
     prisma.projectClientMap.findMany({
       where: { active: true, client: { archivedAt: null } },
-      include: { project: { select: { id: true, name: true } } },
+      include: {
+        project: { select: { id: true, name: true, owner: true } },
+        defaultAssignee: true,
+      },
     }),
     prisma.clientActivity.findMany({
       where: { client: { archivedAt: null } },
@@ -48,7 +57,7 @@ export default async function TasksPage({
       // The Client chip must not list clients an employee can't see.
       where: {
         archivedAt: null,
-        ...(mine ? { activities: { some: { assigneeId: mine } } } : {}),
+        ...(scope ? { id: { in: [...scope.clientIds] } } : {}),
       },
       orderBy: { companyName: "asc" },
     }),
@@ -62,17 +71,19 @@ export default async function TasksPage({
   // Tasks in every period that's in play for each active assignment: the
   // current one, plus earlier ones that still have unfinished work (two
   // periods of the same project can run at once).
-  const currentPeriodOf = new Map(assignments.map((a) => [`${a.clientId}:${a.projectId}`, a.currentPeriod]));
+  const engagementOf = new Map(assignments.map((a) => [engagementKeyString(a), a]));
+  const currentPeriodOf = new Map(assignments.map((a) => [engagementKeyString(a), a.currentPeriod]));
   const rowsByEngagement = new Map<string, typeof activities>();
   for (const a of activities) {
-    const k = `${a.clientId}:${a.projectId}`;
+    const k = engagementKeyString(a);
     const list = rowsByEngagement.get(k);
     if (list) list.push(a);
     else rowsByEngagement.set(k, [a]);
   }
   const currentKey = new Set<string>();
   for (const [k, current] of currentPeriodOf) {
-    for (const p of periodsInPlay(rowsByEngagement.get(k) ?? [], current)) currentKey.add(`${k}:${p}`);
+    if (!canSee(scope, engagementOf.get(k)!)) continue;
+    for (const p of periodsInPlay(rowsByEngagement.get(k) ?? [], current)) currentKey.add(`${k}\u0000${p}`);
   }
   const periodByName = new Map(periods.map((p) => [p.name, p]));
   // Each step carries its own resolved deadline (project rule → client
@@ -82,12 +93,17 @@ export default async function TasksPage({
   const dueOf = (a: (typeof activities)[number]) =>
     a.dueDate ?? periodByName.get(a.periodName)?.endDate ?? null;
 
+  const responsibleOf = (a: (typeof activities)[number]) => {
+    const e = engagementOf.get(engagementKeyString(a));
+    return e?.defaultAssignee ?? e?.project.owner ?? null;
+  };
+
   const rows: TaskRow[] = activities
-    .filter((a) => currentKey.has(`${a.clientId}:${a.projectId}:${a.periodName}`))
+    .filter((a) => currentKey.has(`${engagementKeyString(a)}\u0000${a.periodName}`))
     .filter((a) => !statusFilter || a.status === statusFilter)
     .filter((a) => !clientFilter || a.clientId === clientFilter)
     .filter((a) => !projectFilter || a.projectId === projectFilter)
-    .filter((a) => !assigneeFilter || a.assigneeId === assigneeFilter)
+    .filter((a) => !assigneeFilter || a.assigneeId === assigneeFilter || responsibleOf(a)?.id === assigneeFilter)
     .filter((a) =>
       matchesClientFilters(
         { groupName: a.client.groupName, tagIds: a.client.tags.map((t) => t.tagId) },
@@ -99,28 +115,31 @@ export default async function TasksPage({
         !query ||
         a.client.companyName.toLowerCase().includes(query) ||
         a.project.name.toLowerCase().includes(query) ||
+        (engagementOf.get(engagementKeyString(a))?.name ?? "").toLowerCase().includes(query) ||
         a.subTask.name.toLowerCase().includes(query)
     )
     .filter((a) => !dueFilter || matchesDueFilter(dueBucket(dueOf(a), a.status), dueFilter))
     .map((a) => {
       const dueDate = dueOf(a);
+      const engagement = engagementOf.get(engagementKeyString(a));
+      const isCurrent = currentPeriodOf.get(engagementKeyString(a)) === a.periodName;
+      // Who's on it is a project-level fact: the engagement's responsible
+      // person. A step individually assigned to someone else says so too.
+      const responsible = responsibleOf(a);
+      const who = responsible ?? a.assignee;
+      const stepOther = a.assignee && responsible && a.assignee.id !== responsible.id ? a.assignee : null;
       return {
         id: a.id,
         clientId: a.clientId,
         projectId: a.projectId,
         clientName: a.client.companyName,
-        projectName: a.project.name,
-        periodLabel:
-          currentPeriodOf.get(`${a.clientId}:${a.projectId}`) === a.periodName
-            ? null
-            : `${formatPeriodName(a.periodName)} · still open`,
-        href:
-          currentPeriodOf.get(`${a.clientId}:${a.projectId}`) === a.periodName
-            ? `/assignments/${a.clientId}/${a.projectId}`
-            : `/assignments/${a.clientId}/${a.projectId}?period=${encodeURIComponent(a.periodName)}`,
+        projectName: engagementLabel(a.project.name, engagement?.name, a.instance),
+        periodLabel: isCurrent ? null : `${formatPeriodName(a.periodName)} · still open`,
+        href: engagementHref(a, { period: isCurrent ? null : a.periodName }),
         step: a.subTask.name,
         status: a.status,
-        assigneeName: a.assignee ? `${a.assignee.firstName} ${a.assignee.lastName}` : "Unassigned",
+        assigneeName: who ? `${who.firstName} ${who.lastName}` : "Unassigned",
+        stepAssigneeName: stepOther ? `${stepOther.firstName} ${stepOther.lastName}` : null,
         dueDate: dueDate ? dueDate.toISOString() : null,
         dueOverridden: a.dueDateOverridden,
         urgency: dueDateUrgency(dueDate, a.status),
@@ -144,7 +163,7 @@ export default async function TasksPage({
           <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
           <p className="mt-1 text-sm text-ink-muted">
             {mine
-              ? "Every checklist step assigned to you that's in play — this period, and any earlier period still open."
+              ? "Every step of every project you're assigned to (or have a task in) — this period, and any earlier period still open."
               : "Every checklist step in play across all clients — this period, and any earlier period still open."}
           </p>
         </div>
@@ -157,7 +176,7 @@ export default async function TasksPage({
           searchPlaceholder="Search client, project or step"
           due
           clients={clients.map((c) => ({ value: c.id, label: c.companyName }))}
-          employees={mine ? undefined : employeeOptions}
+          employees={employeeOptions}
           projects={projectOptions}
           groups={groups.map((g) => ({ value: g, label: g }))}
           tags={tags.map((t) => ({ value: t.id, label: t.name }))}

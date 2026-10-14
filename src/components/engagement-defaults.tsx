@@ -23,6 +23,7 @@ type Employee = { id: string; name: string };
 export function EngagementDefaults({
   clientId,
   projectId,
+  instance = 1,
   periodName,
   employees,
   defaultAssigneeId,
@@ -32,6 +33,8 @@ export function EngagementDefaults({
 }: {
   clientId: string;
   projectId: string;
+  // Which copy of the project for this client (src/lib/engagements.ts).
+  instance?: number;
   periodName: string | null;
   employees: Employee[];
   defaultAssigneeId: string | null;
@@ -54,7 +57,7 @@ export function EngagementDefaults({
     setMessage(null);
     startTransition(async () => {
       try {
-        await setEngagementDefaultAssignee(clientId, projectId, next || null);
+        await setEngagementDefaultAssignee(clientId, projectId, next || null, instance);
         setMessage(
           next
             ? "Saved. New periods will be assigned automatically."
@@ -76,7 +79,7 @@ export function EngagementDefaults({
     setMessage(null);
     startTransition(async () => {
       try {
-        const count = await applyDefaultAssignees(clientId, projectId, periodName);
+        const count = await applyDefaultAssignees(clientId, projectId, periodName, instance);
         setMessage(
           count === 0
             ? "No unassigned step had a default to apply."

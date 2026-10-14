@@ -16,6 +16,7 @@ import {
 import { TimeEntryForm } from "@/components/time-entry-form";
 import { TimeEntryList, type TimeRow } from "@/components/time-entry-list";
 import { ExportBar } from "@/components/export-bar";
+import { engagementHref } from "@/lib/engagements";
 
 // The timesheet.
 //
@@ -84,7 +85,9 @@ export default async function TimePage({
     rateSnapshot: scope.canSeeMoney ? e.rateSnapshot : null,
     editable: e.employeeId === user.id || user.role === "ADMIN",
     href:
-      e.clientId && e.projectId ? `/assignments/${e.clientId}/${e.projectId}` : null,
+      e.clientId && e.projectId
+        ? engagementHref({ clientId: e.clientId, projectId: e.projectId, instance: e.instance })
+        : null,
   }));
 
   const keep = (extra: Record<string, string | null>) => {

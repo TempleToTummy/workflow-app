@@ -9,6 +9,7 @@ import {
 } from "@/lib/scheduler";
 import { currentPeriodName, isPeriodBefore } from "@/lib/periods";
 import { effectiveAnchor } from "@/lib/period-names";
+import { engagementHref, engagementKeyString } from "@/lib/engagements";
 
 // Work Generation — the operational view of the scheduled job that opens each
 // engagement's accounting periods. Before this existed, the next period was
@@ -65,9 +66,10 @@ export default async function SchedulerPage() {
       return isPeriodBefore(type, a.currentPeriod, currentPeriodName(type, now, anchor));
     })
     .map((a) => ({
-      key: `${a.clientId}:${a.projectId}`,
+      key: engagementKeyString(a),
       clientId: a.clientId,
       projectId: a.projectId,
+      instance: a.instance,
       clientName: a.client.companyName,
       projectName: a.project.name,
       parkedIn: a.currentPeriod!,
@@ -139,7 +141,7 @@ export default async function SchedulerPage() {
                   <tr key={b.key} className="border-b border-line last:border-0">
                     <td className="px-4 py-3">
                       <Link
-                        href={`/assignments/${b.clientId}/${b.projectId}`}
+                        href={engagementHref(b)}
                         className="font-medium text-ink hover:text-accent"
                       >
                         {b.clientName}

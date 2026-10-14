@@ -61,7 +61,7 @@ id guessed or kept from an old assignment gets nowhere:
 
 | Who | Can |
 | --- | --- |
-| Employee, on an engagement (has a task on that client + service, any period) | Work it: step status, assignees, subtasks, notes, files, comments, timers, client requests, the engagement's deadline override and default owner |
+| Employee, on an engagement — its responsible person (the engagement's own owner, else the project's owner from "Projects they handle"), or anyone with a task in it | See all of it, including steps assigned to other people, and work it: step status, assignees, subtasks, notes, files, comments, timers, client requests, the engagement's deadline override and default owner |
 | Employee, on any of a client's engagements | Edit that client's details, contacts and tags |
 | Admin | All of the above for every client, plus firm structure: add / archive / delete clients, turn services on for a client, and edit service templates (checklist steps, due rules, step owners, estimates) |
 
@@ -212,10 +212,31 @@ move down one (the Projects Task Map admin page takes a step number too). A
 step added mid-checklist is also added to client periods already in progress,
 unless their work is already past that point. Drag the handle to reorder.
 
-Every project with steps ends with the one shared **Completed Y/N** step. It is
-a single step used by all projects (not a copy per project), always last, and
-can't be removed or moved; rename it once on Admin → Projects Task. The logic
-is in `src/lib/checklist.ts` / `checklist-rules.ts`.
+Each project has its own steps, including its own "Completed Y/N". The logic is
+in `src/lib/checklist.ts` / `checklist-rules.ts`.
+
+## Assignment is per project, not per task
+
+Who works on something is decided at the project level: tick projects on an
+employee's page (**Projects they handle**), or set a client's own owner for one
+project on its engagement page. That person is shown as "Assigned to" on the
+dashboard, Tasks list, client and project pages, every period is pre-assigned
+to them, and they see the whole engagement — every step, even ones
+individually assigned to someone else (shown as "step: Name"). Per-step
+assignment still exists for the odd specialist step; it just isn't what
+decides who sees what. The rule is in `src/lib/access.ts`.
+
+## Running the same project twice for one client
+
+On the client page, **+ Add another** on a project row starts a second,
+completely independent copy of that project for the client — its own checklist,
+periods, owner, due-date override, start date, notes, files, client requests
+and history. Give it any name ("Client Bookkeeping 2", "Bookkeeping — Second
+Location"); blank means "Bookkeeping 2". Rename any copy from the **Rename**
+link next to its title. Each copy is its own row on the dashboard and its own
+group on the Tasks list. Internally a copy is an engagement with an
+`instance` number (`src/lib/engagements.ts`); the first copy is instance 1,
+which is what every existing engagement became, so old links keep working.
 
 ## Client notes
 
@@ -230,9 +251,10 @@ After pulling a release that changes the schema:
 
 ```bash
 npm run db:backup                 # always first
-npx prisma db push                # may ask for --accept-data-loss for new unique columns; they're empty
+npx prisma db push                # may ask for --accept-data-loss (new columns / the engagement key gaining
+                                  # an instance number); existing rows are kept — take the backup first
 npm run db:upgrade                # dry run: shows what will change
-npm run db:upgrade -- --apply     # merges old "Completed Y/N" copies, renumbers checklists 1, 2, 3…
+npm run db:upgrade -- --apply     # renumbers checklists 1, 2, 3…; gives each project its own Completed Y/N
 ```
 
 ## Due dates
@@ -646,7 +668,7 @@ In short:
 ## Tests
 
 ```bash
-npm test     # 734 assertions across fifteen scripts, no framework, no database
+npm test     # 755 assertions across sixteen scripts, no framework, no database
 ```
 
 Among them: `test-core-rules.ts` covers the rules the app stands on —

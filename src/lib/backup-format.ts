@@ -21,13 +21,16 @@
 // `npm run security:encrypt -- --apply` like any other legacy data.
 //
 // Version 3: the ClientNote table; Project gained recurrenceAnchor and ownerId,
-// ProjectClientMap gained recurrenceAnchor, ProjectSubTask gained systemKey —
-// all optional, so older rows restore as they are. After restoring an older
-// backup, run `npm run db:upgrade -- --apply` to fold its per-project
-// "Completed Y/N" steps into the universal one.
+// ProjectClientMap gained recurrenceAnchor — all optional, so older rows
+// restore as they are. After restoring an older backup, run
+// `npm run db:upgrade -- --apply` to bring its data up to date.
+//
+// Version 4: a client can run the same project more than once. Every
+// engagement-scoped table gained `instance` (default 1) and ProjectClientMap a
+// `name`; older rows restore as instance 1, which is exactly what they were.
 
 export const BACKUP_FORMAT = "workflow-backup";
-export const BACKUP_VERSION = 3;
+export const BACKUP_VERSION = 4;
 
 // Tables added after version 1, and the version that introduced each. A backup
 // older than that simply doesn't have the table, which restores as empty.

@@ -8,93 +8,53 @@
 // (`npm run db:backup`) — this rewrites checklist rows.
 //
 // What it does today:
-//   1. Folds every per-project copy of "Completed Y/N" into ONE universal step
-//      (ProjectSubTask.systemKey = "COMPLETED"), repointing each project's
-//      checklist and every task row at it.
-//   2. Runs each project's checklist through normalizeChecklist: numbered
-//      1, 2, 3…, the universal step last on every project that has steps,
-//      and periods still in progress renumbered to match.
+//   1. Gives every project its own "Completed Y/N" step again. A short-lived
+//      version of the app merged them into one shared step; any such step
+//      used by several projects is split back into one copy per project, and
+//      each project's task rows are pointed at its own copy.
+//   2. Numbers every project's checklist 1, 2, 3… and renumbers the periods
+//      still in progress to match.
 import { PrismaClient } from "@prisma/client";
-import { COMPLETED_KEY, COMPLETED_NAME, isCompletedStepName } from "../src/lib/checklist-rules";
+import { isCompletedStepName } from "../src/lib/checklist-rules";
 
 const apply = process.argv.includes("--apply");
 const prisma = new PrismaClient();
 const notes: string[] = [];
 
-async function mergeCompletedSteps() {
-  const candidates = (await prisma.projectSubTask.findMany({
-    include: { _count: { select: { taskMaps: true, activities: true } } },
-  })).filter((s) => s.systemKey === COMPLETED_KEY || isCompletedStepName(s.name));
-
-  if (candidates.length === 0) {
-    console.log("  No \"Completed\" steps yet — the first project with steps will create the universal one.");
-    return;
-  }
-  // Keep the one already marked universal, else the most-used copy.
-  const canonical =
-    candidates.find((s) => s.systemKey === COMPLETED_KEY) ??
-    [...candidates].sort(
-      (a, b) => b._count.taskMaps + b._count.activities - (a._count.taskMaps + a._count.activities)
-    )[0];
-  const duplicates = candidates.filter((s) => s.id !== canonical.id);
-
+async function splitSharedCompletedSteps() {
+  const shared = (
+    await prisma.projectSubTask.findMany({ include: { taskMaps: { orderBy: { projectId: "asc" } } } })
+  ).filter((s) => isCompletedStepName(s.name) && s.taskMaps.length > 1);
+  const copies = shared.reduce((n, s) => n + s.taskMaps.length - 1, 0);
   console.log(
-    `  "Completed" steps found: ${candidates.length} → 1 universal step` +
-      (duplicates.length ? ` (${duplicates.length} duplicate${duplicates.length === 1 ? "" : "s"} to merge)` : "")
+    copies === 0
+      ? '  "Completed Y/N": every project already has its own.'
+      : `  "Completed Y/N": ${shared.length} shared step${shared.length === 1 ? "" : "s"} → ${copies} new per-project cop${copies === 1 ? "y" : "ies"}`
   );
   if (!apply) return;
 
-  await prisma.projectSubTask.update({
-    where: { id: canonical.id },
-    data: { systemKey: COMPLETED_KEY, name: COMPLETED_NAME },
-  });
-
-  for (const dup of duplicates) {
-    const maps = await prisma.projectTaskMap.findMany({ where: { subTaskId: dup.id } });
-    for (const m of maps) {
-      const already = await prisma.projectTaskMap.findUnique({
-        where: { projectId_subTaskId: { projectId: m.projectId, subTaskId: canonical.id } },
-      });
+  for (const step of shared) {
+    // The first project keeps the existing row; every other one gets a copy.
+    for (const m of step.taskMaps.slice(1)) {
+      const copy = await prisma.projectSubTask.create({ data: { name: step.name, note: step.note } });
       await prisma.$transaction([
-        prisma.projectTaskMap.delete({ where: { projectId_subTaskId: { projectId: m.projectId, subTaskId: dup.id } } }),
-        ...(already
-          ? []
-          : [
-              prisma.projectTaskMap.create({
-                data: {
-                  projectId: m.projectId,
-                  subTaskId: canonical.id,
-                  sequence: m.sequence,
-                  defaultAssigneeId: m.defaultAssigneeId,
-                  dueOffsetDays: m.dueOffsetDays,
-                  estimatedMinutes: m.estimatedMinutes,
-                },
-              }),
-            ]),
+        prisma.projectTaskMap.delete({ where: { projectId_subTaskId: { projectId: m.projectId, subTaskId: step.id } } }),
+        prisma.projectTaskMap.create({
+          data: {
+            projectId: m.projectId,
+            subTaskId: copy.id,
+            sequence: m.sequence,
+            defaultAssigneeId: m.defaultAssigneeId,
+            dueOffsetDays: m.dueOffsetDays,
+            estimatedMinutes: m.estimatedMinutes,
+          },
+        }),
+        prisma.clientActivity.updateMany({
+          where: { projectId: m.projectId, subTaskId: step.id },
+          data: { subTaskId: copy.id },
+        }),
       ]);
     }
-
-    const rows = await prisma.clientActivity.findMany({ where: { subTaskId: dup.id } });
-    for (const r of rows) {
-      const clash = await prisma.clientActivity.findUnique({
-        where: {
-          clientId_projectId_subTaskId_periodName: {
-            clientId: r.clientId,
-            projectId: r.projectId,
-            subTaskId: canonical.id,
-            periodName: r.periodName,
-          },
-        },
-      });
-      if (clash) {
-        notes.push(`task row ${r.id} (${r.periodName}) duplicates an existing Completed row and was left as is`);
-        continue;
-      }
-      await prisma.clientActivity.update({ where: { id: r.id }, data: { subTaskId: canonical.id } });
-    }
-
-    const left = await prisma.clientActivity.count({ where: { subTaskId: dup.id } });
-    if (left === 0) await prisma.projectSubTask.delete({ where: { id: dup.id } });
   }
 }
 
@@ -102,14 +62,10 @@ async function normalizeAllChecklists() {
   // Imported here so a dry run never touches the app's own Prisma client.
   const { normalizeChecklist } = await import("../src/lib/checklist");
   const projects = await prisma.project.findMany({
-    select: { id: true, name: true, subtasks: { orderBy: { sequence: "asc" }, select: { sequence: true } } },
+    select: { id: true, subtasks: { orderBy: { sequence: "asc" }, select: { sequence: true } } },
   });
-  let changed = 0;
-  for (const p of projects) {
-    const seqs = p.subtasks.map((s) => s.sequence);
-    if (seqs.some((n, i) => n !== i + 1)) changed += 1;
-  }
-  console.log(`  Projects to renumber 1, 2, 3… with "Completed Y/N" last: ${changed} of ${projects.length} (checked again after merging)`);
+  const changed = projects.filter((p) => p.subtasks.some((s, i) => s.sequence !== i + 1)).length;
+  console.log(`  Checklists to renumber 1, 2, 3…: ${changed} of ${projects.length}`);
   if (!apply) return;
   for (const p of projects) {
     await normalizeChecklist(p.id, { actor: { id: null, label: "Data upgrade" } });
@@ -118,7 +74,7 @@ async function normalizeAllChecklists() {
 
 async function main() {
   console.log(apply ? "Upgrading data…\n" : "Dry run — nothing will change.\n");
-  await mergeCompletedSteps();
+  await splitSharedCompletedSteps();
   await normalizeAllChecklists();
   if (notes.length) {
     console.log(`\n${notes.length} item(s) to review:`);

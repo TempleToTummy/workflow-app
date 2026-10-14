@@ -1,56 +1,33 @@
-// Checklist order: inserting between steps, the universal final step.
+// Checklist order: inserting between steps, numbering 1..n.
 // No framework, no database:
 //
 //   ./node_modules/.bin/tsx scripts/test-checklist.ts
-import {
-  planChecklist,
-  enforceCompletedLast,
-  canAddToOpenPeriod,
-  isCompletedStepName,
-} from "../src/lib/checklist-rules";
+import { planChecklist, canAddToOpenPeriod, isCompletedStepName } from "../src/lib/checklist-rules";
 import { check, section, finish } from "./harness";
 
-const steps = ["s1", "s2", "s3", "s4", "s5", "s6"];
-const C = "completed";
+const steps = ["s1", "s2", "s3", "s4", "s5", "s6", "done"];
 
 section("inserting between steps");
 // "I want to add a task between task 4 and 5": the new task becomes number 5
 // and the old 5 onward each move down one.
 {
-  const out = planChecklist([...steps, C], { completedId: C, insert: { id: "new", position: 5 } });
+  const out = planChecklist(steps, { insert: { id: "new", position: 5 } });
   check("the new task is number 5", out.indexOf("new") + 1, 5);
-  check("everything after it moved down one", out, ["s1", "s2", "s3", "s4", "new", "s5", "s6", C]);
+  check("everything after it moved down one", out, ["s1", "s2", "s3", "s4", "new", "s5", "s6", "done"]);
 }
-check("position 1 puts it first", planChecklist([...steps, C], { completedId: C, insert: { id: "new", position: 1 } })[0], "new");
-check(
-  "past the end lands just above Completed",
-  planChecklist([...steps, C], { completedId: C, insert: { id: "new", position: 99 } }).slice(-2),
-  ["new", C]
-);
-check(
-  "a position at Completed's own slot still goes above it",
-  planChecklist(["s1", "s2", C], { completedId: C, insert: { id: "new", position: 3 } }),
-  ["s1", "s2", "new", C]
-);
-check(
-  "zero or negative positions go first",
-  planChecklist(["s1", C], { completedId: C, insert: { id: "new", position: 0 } }),
-  ["new", "s1", C]
-);
+check("position 1 puts it first", planChecklist(steps, { insert: { id: "new", position: 1 } })[0], "new");
+check("past the end goes last", planChecklist(steps, { insert: { id: "new", position: 99 } }).slice(-1), ["new"]);
+check("zero or negative positions go first", planChecklist(["s1"], { insert: { id: "new", position: 0 } }), ["new", "s1"]);
 check(
   "re-inserting an existing step moves it",
-  planChecklist(["s1", "s2", "s3", C], { completedId: C, insert: { id: "s3", position: 1 } }),
-  ["s3", "s1", "s2", C]
+  planChecklist(["s1", "s2", "s3"], { insert: { id: "s3", position: 1 } }),
+  ["s3", "s1", "s2"]
 );
+check("no insert → order unchanged", planChecklist(steps), steps);
+check("the first step of an empty project", planChecklist([], { insert: { id: "s1", position: 1 } }), ["s1"]);
 
-section("the universal Completed step");
-check("added to a project's first step", planChecklist([], { completedId: C, insert: { id: "s1", position: 1 } }), ["s1", C]);
-check("never on an empty project", planChecklist([C], { completedId: C }), []);
-check("dragged to the top, it goes back to the end", enforceCompletedLast([C, "s1", "s2"], C), ["s1", "s2", C]);
-check("dragged into the middle, the same", enforceCompletedLast(["s1", C, "s2"], C), ["s1", "s2", C]);
-check("a project missing it gets it", enforceCompletedLast(["s1", "s2"], C), ["s1", "s2", C]);
-check("no universal step yet → left alone", enforceCompletedLast(["s1", "s2"], null), ["s1", "s2"]);
-check("old copies are recognised", ["Completed Y/N", "completed (y/n)", " Completed ", "Complete"].map(isCompletedStepName), [true, true, true, true]);
+section("each project keeps its own Completed Y/N");
+check("recognised for the upgrade that splits a shared one", ["Completed Y/N", "completed (y/n)", " Completed "].map(isCompletedStepName), [true, true, true]);
 check("…but not other steps", ["Completed review", "Confirm 8879 signed"].map(isCompletedStepName), [false, false]);
 
 section("adding to a period already under way");

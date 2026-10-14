@@ -59,7 +59,7 @@ export default async function EmailPage({
   // Every restriction goes in its own AND clause. The visibility scope and the
   // search both need an OR, and merging two ORs into one object would silently
   // drop the first — which would show an employee the whole firm's mail.
-  const scope = messageScope(user);
+  const scope = await messageScope(user);
   const clauses: Prisma.EmailMessageWhereInput[] = [];
   if (Object.keys(scope).length > 0) clauses.push(scope);
   if (clientFilter) clauses.push({ clientId: clientFilter });
