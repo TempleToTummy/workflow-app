@@ -192,25 +192,32 @@ export default async function AssignmentDetailPage({
   // current one until they're done, and the page says so.
   const otherOpen = history.filter((h) => h.open && h.name !== assignment.currentPeriod);
 
-  // "Start next period now": available once the current period has begun, so
-  // the engagement is never more than one period ahead of the calendar.
+  // The period after the current one, shown at the end of the Periods row from
+  // whichever period is being viewed. It can be opened early once the current
+  // period has begun, so the engagement is never more than one period ahead of
+  // the calendar; until then the row says when it can be. Opened early, it's
+  // simply the next period: same checklist, due date and owner as if it had
+  // opened on schedule, and the nightly job carries on from it.
   const type = assignment.project.recurring.type;
-  let startableNext: string | null = null;
-  if (isCurrent && assignment.active && type !== "ONE_TIME" && assignment.currentPeriod) {
+  let upcoming: { name: string; opensFrom: Date | null } | null = null;
+  if (assignment.active && type !== "ONE_TIME" && assignment.currentPeriod) {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      if (parsePeriodName(assignment.currentPeriod).start.getTime() <= today.getTime()) {
-        startableNext = nextPeriodName(
-          type,
-          assignment.currentPeriod,
-          effectiveAnchor(assignment.project.recurrenceAnchor, assignment.recurrenceAnchor)
-        );
+      const currentStart = parsePeriodName(assignment.currentPeriod).start;
+      const name = nextPeriodName(
+        type,
+        assignment.currentPeriod,
+        effectiveAnchor(assignment.project.recurrenceAnchor, assignment.recurrenceAnchor)
+      );
+      if (name) {
+        upcoming = { name, opensFrom: currentStart.getTime() <= today.getTime() ? null : currentStart };
       }
     } catch {
-      startableNext = null;
+      upcoming = null;
     }
   }
+  const startableNext = upcoming && !upcoming.opensFrom ? upcoming.name : null;
   const employeeOptions = employees.map((e) => ({ id: e.id, name: employeeName(e) }));
 
   const overallStatus = deriveAssignmentStatus(activities);
@@ -292,7 +299,7 @@ export default async function AssignmentDetailPage({
             <span className="tabular text-sm text-ink-muted">{progress} done</span>
             <StatusBadge status={overallStatus} />
           </div>
-          {startableNext && (
+          {isCurrent && startableNext && (
             <StartNextPeriod
               clientId={clientId}
               projectId={projectId}
@@ -304,9 +311,31 @@ export default async function AssignmentDetailPage({
         </div>
       </div>
 
-      {history.length > 1 && (
+      {(history.length > 1 || upcoming) && (
         <div className="mt-4 flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs text-ink-muted">Periods</span>
+          {/* Newest first, so the not-yet-open next period leads the row. */}
+          {upcoming &&
+            (upcoming.opensFrom ? (
+              <span
+                title={`${formatPeriodName(upcoming.name)} can be opened early once ${formatPeriodName(
+                  assignment.currentPeriod!
+                )} begins.`}
+                className="tabular rounded-full border border-dashed border-line px-2.5 py-0.5 text-xs text-ink-muted"
+              >
+                {formatPeriodName(upcoming.name)}
+                <span className="font-sans opacity-70"> · next, opens early from {formatDate(upcoming.opensFrom)}</span>
+              </span>
+            ) : (
+              <StartNextPeriod
+                variant="chip"
+                clientId={clientId}
+                projectId={projectId}
+                instance={instance}
+                nextPeriod={upcoming.name}
+                currentDone={completed && isCurrent}
+              />
+            ))}
           {history.map((h) => {
             const active = h.name === periodName;
             const current = h.name === assignment.currentPeriod;

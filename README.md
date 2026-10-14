@@ -196,9 +196,14 @@ everything else, shown on screen as "Oct 12 – 25, 2026". The rules live in
 
 ## Two periods at once
 
-A new period opens on schedule whether or not the last one is finished, and
-**Start … now** on the engagement page opens the next period early (at most one
-period ahead of the calendar). Every unfinished period stays in play: it has
+A new period opens on schedule whether or not the last one is finished. The
+next period is always at the end of the **Periods** row on the engagement page
+(e.g. **+ 2026-11 · next, open early**), from whichever period you're
+viewing. Click it, or **Open … early** by the title, to start its work now.
+Opened early, it's simply the next period: the same checklist, owner and due
+date it would have had on schedule, and the nightly job carries on from it
+without opening it twice. You can be at most one period ahead of the calendar:
+once November is open in October, December shows as "opens early from Nov 1". Every unfinished period stays in play: it has
 its own row on the dashboard, its tasks stay on the Tasks list (marked "still
 open"), and the engagement page flags it with a banner and an "open" chip. Each
 period keeps its own checklist, files, time and due date, and finish-in-order
