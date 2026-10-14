@@ -795,7 +795,7 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
   progress and adds an inserted step to them when their work isn't past it.
   (A shared "Completed Y/N" step was tried and reverted: each project keeps
   its own. `npm run db:upgrade -- --apply` splits a merged one back.)
-- Project.ownerId ("Projects they handle" on the employee edit page) is a
+- Project.ownerId ("Projects they handle" on the New and Edit employee forms) is a
   third default-assignee layer below step and engagement defaults.
 - ClientNote: client-level notes on the client page, searchable, backed up
   (BACKUP_VERSION 3).

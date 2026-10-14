@@ -6,8 +6,10 @@ import {
   createEmployee,
   updateEmployee,
   createEmployeeType,
+  setEmployeeProjects,
   type EmployeeFormInput,
 } from "@/lib/actions";
+import { EmployeeProjects, type EmployeeProjectOption } from "@/components/employee-projects";
 
 type Lookup = { id: string; name: string };
 type ExistingEmployee = EmployeeFormInput & { id: string };
@@ -19,12 +21,30 @@ export function EmployeeForm({
   mode,
   employee,
   employeeTypes,
+  projects,
+  ownedProjectIds = [],
 }: {
   mode: "create" | "edit";
   employee?: ExistingEmployee;
   employeeTypes: Lookup[];
+  // Every project, for "Projects they handle".
+  projects: EmployeeProjectOption[];
+  // The projects this employee already handles (edit only).
+  ownedProjectIds?: string[];
 }) {
   const router = useRouter();
+  const [owned] = useState(() => new Set(ownedProjectIds));
+  const [selected, setSelected] = useState(() => new Set(ownedProjectIds));
+  const [firstName, setFirstName] = useState(employee?.firstName ?? "");
+
+  function toggleProject(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [types, setTypes] = useState(employeeTypes);
@@ -60,11 +80,19 @@ export function EmployeeForm({
 
     startTransition(async () => {
       try {
+        let id: string;
         if (mode === "create") {
-          await createEmployee(values);
+          const created = await createEmployee(values);
+          if (!created) throw new Error("Couldn't create the employee.");
+          id = created.id;
         } else {
           await updateEmployee(employee!.id, values);
+          id = employee!.id;
         }
+        // Projects are saved with the rest of the form. Skipped when nothing
+        // changed, so editing a phone number doesn't touch project ownership.
+        const changed = selected.size !== owned.size || [...selected].some((p) => !owned.has(p));
+        if (changed) await setEmployeeProjects(id, [...selected]);
         router.push("/admin/employees");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't save employee.");
@@ -81,6 +109,7 @@ export function EmployeeForm({
             <input
               name="firstName"
               defaultValue={employee?.firstName}
+              onChange={(e) => setFirstName(e.target.value)}
               required
               className={inputClass}
             />
@@ -161,6 +190,15 @@ export function EmployeeForm({
           </label>
         </div>
       </div>
+
+      <EmployeeProjects
+        employeeName={firstName.trim() || "this employee"}
+        projects={projects}
+        selected={selected}
+        initiallyOwned={owned}
+        onToggle={toggleProject}
+        disabled={isPending}
+      />
 
       {error && <p className="text-sm text-overdue">{error}</p>}
 

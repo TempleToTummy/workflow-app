@@ -218,7 +218,7 @@ in `src/lib/checklist.ts` / `checklist-rules.ts`.
 ## Assignment is per project, not per task
 
 Who works on something is decided at the project level: tick projects on an
-employee's page (**Projects they handle**), or set a client's own owner for one
+employee's form (**Projects they handle**, on both New Employee and Edit), or set a client's own owner for one
 project on its engagement page. That person is shown as "Assigned to" on the
 dashboard, Tasks list, client and project pages, every period is pre-assigned
 to them, and they see the whole engagement — every step, even ones
@@ -462,7 +462,7 @@ them in at generation time:
 | --- | --- | --- |
 | Step owner | Project page, per checklist step | "Reviewer Layer 2 is always Marcus" |
 | Engagement owner | Assignment page → Default owner | "Dana owns Bluepoint's bookkeeping" |
-| Project owner | Admin → Employees → Edit → **Projects they handle** | "Priya does our bookkeeping" |
+| Project owner | Admin → Employees → New or Edit → **Projects they handle** | "Priya does our bookkeeping" |
 
 The usual setup is just the project owner: tick the projects on each employee's
 page, and every client assigned to those projects arrives with every task

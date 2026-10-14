@@ -967,7 +967,8 @@ export async function createEmployee(data: EmployeeFormInput) {
     });
     revalidatePath("/admin/employees");
     revalidatePath("/activity");
-    return employee;
+    // Only the id goes back to the browser, not the row with its invite token.
+    return { id: employee.id };
   } catch (err) {
     rethrowFriendly(err, { unique: "That email is already in use by another employee." });
   }

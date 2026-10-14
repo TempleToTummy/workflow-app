@@ -1,9 +1,5 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { setEmployeeProjects } from "@/lib/actions";
-
 export type EmployeeProjectOption = {
   id: string;
   name: string;
@@ -13,65 +9,35 @@ export type EmployeeProjectOption = {
   activeClients: number;
 };
 
-// "Projects they handle" on the employee edit page. Ticking a project makes
-// this person its owner: every client on it is pre-assigned to them, period
-// after period, with no per-task assigning.
+// "Projects they handle", part of the employee form on both New Employee and
+// Edit Employee. Ticking a project makes this person its owner: every client
+// on it is assigned to them at the project level, period after period, with no
+// per-task assigning. Saved with the rest of the form.
 export function EmployeeProjects({
-  employeeId,
   employeeName,
   projects,
-  owned,
+  selected,
+  initiallyOwned,
+  onToggle,
+  disabled,
 }: {
-  employeeId: string;
   employeeName: string;
   projects: EmployeeProjectOption[];
-  owned: string[];
+  selected: Set<string>;
+  initiallyOwned: Set<string>;
+  onToggle: (id: string) => void;
+  disabled: boolean;
 }) {
-  const router = useRouter();
-  const [selected, setSelected] = useState(() => new Set(owned));
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-
-  const ownedSet = new Set(owned);
-  const dirty = selected.size !== ownedSet.size || [...selected].some((id) => !ownedSet.has(id));
-  const takingOver = projects.filter((p) => selected.has(p.id) && !ownedSet.has(p.id) && p.otherOwner);
-
-  function toggle(id: string) {
-    setMessage(null);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function save() {
-    setError(null);
-    setMessage(null);
-    startTransition(async () => {
-      try {
-        const r = await setEmployeeProjects(employeeId, [...selected]);
-        const parts = ["Saved."];
-        if (r.filled > 0) {
-          parts.push(`${r.filled} open task${r.filled === 1 ? " that had" : "s that had"} no one assigned now ${r.filled === 1 ? "goes" : "go"} to ${employeeName}.`);
-        }
-        setMessage(parts.join(" "));
-        router.refresh();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Couldn't save.");
-      }
-    });
-  }
+  const takingOver = projects.filter((p) => selected.has(p.id) && !initiallyOwned.has(p.id) && p.otherOwner);
+  const previousOwners = [...new Set(takingOver.map((p) => p.otherOwner))];
 
   return (
-    <div className="mt-6 rounded-lg border border-line bg-surface p-6">
+    <div className="rounded-lg border border-line bg-surface p-6">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">Projects they handle</h2>
       <p className="mt-1 text-sm text-ink-muted">
-        When one of these projects is assigned to a client, every task is assigned to {employeeName}{" "}
-        automatically — and every period after that. A client can still have its own owner on its
-        engagement page, and a step can name a specialist (e.g. a reviewer).
+        When one of these projects is assigned to a client, it&apos;s assigned to {employeeName}{" "}
+        automatically — every task, every period — and they can see all of it. A client can still have
+        its own owner for a project on its engagement page.
       </p>
 
       <ul className="mt-4 grid gap-1 sm:grid-cols-2">
@@ -81,8 +47,8 @@ export function EmployeeProjects({
               <input
                 type="checkbox"
                 checked={selected.has(p.id)}
-                onChange={() => toggle(p.id)}
-                disabled={isPending}
+                onChange={() => onToggle(p.id)}
+                disabled={disabled}
                 className="mt-0.5"
               />
               <span className="min-w-0">
@@ -105,25 +71,13 @@ export function EmployeeProjects({
         {projects.length === 0 && <li className="text-sm text-ink-muted">No projects yet.</li>}
       </ul>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={save}
-          disabled={isPending || !dirty}
-          className="rounded-full bg-accent px-5 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {isPending ? "Saving…" : "Save projects"}
-        </button>
-        {takingOver.length > 0 && (
-          <span className="text-xs text-ink-muted">
-            Each project has one owner, so {takingOver.map((p) => p.otherOwner).filter((v, i, a) => a.indexOf(v) === i).join(" and ")}{" "}
-            will stop being the default for {takingOver.length === 1 ? "that project" : "those projects"}. Tasks
-            already assigned don&apos;t move.
-          </span>
-        )}
-      </div>
-      {message && <p className="mt-2 text-xs text-accent">{message}</p>}
-      {error && <p className="mt-2 text-xs text-overdue">{error}</p>}
+      {takingOver.length > 0 && (
+        <p className="mt-3 text-xs text-ink-muted">
+          Each project has one owner, so {previousOwners.join(" and ")} will stop being the owner of{" "}
+          {takingOver.length === 1 ? "that project" : "those projects"}. Tasks already assigned to someone
+          don&apos;t move.
+        </p>
+      )}
     </div>
   );
 }
