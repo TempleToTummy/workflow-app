@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ProjectSubTaskManager } from "@/components/project-subtask-manager";
 
 export default async function ProjectsTaskPage() {
-  const subtasks = await prisma.projectSubTask.findMany({ orderBy: { name: "asc" } });
+  const subtasks = await prisma.projectSubTask.findMany({ where: { clientId: null }, orderBy: { name: "asc" } });
 
   return (
     <div className="mx-auto w-full max-w-6xl px-8 py-8">

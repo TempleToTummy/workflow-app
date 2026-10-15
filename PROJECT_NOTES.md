@@ -812,6 +812,12 @@ app-layer logic instead (see src/lib/workflow.ts and src/lib/actions.ts):
 - Two periods at once: periodsInPlay (src/lib/workflow.ts) keeps unfinished
   earlier periods on the Tasks list; startNextPeriod opens the next period up
   to one period ahead of the calendar.
+- Client steps: a ProjectSubTask with clientId/projectId/instance set (no
+  ProjectTaskMap) belongs to one engagement; `repeats` = every period,
+  `afterSubTaskId` = the step it follows. engagementOrder (checklist-rules.ts)
+  weaves them into the template; openPeriodForAssignment and syncOpenPeriods
+  number periods by it. Actions addClientStep / removeClientStep.
+  BACKUP_VERSION 5.
 
 ## Encryption at rest (SECURITY.md has the full design)
 - Files, Client tax IDs, CorpContact SSNs and backup files are encrypted by the

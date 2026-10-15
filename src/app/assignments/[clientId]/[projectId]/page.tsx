@@ -242,8 +242,10 @@ export default async function AssignmentDetailPage({
 
   const steps = activities.map((a) => ({
     id: a.id,
+    subTaskId: a.subTaskId,
     seq: a.taskSeqNo,
     name: a.subTask.name,
+    clientStep: a.subTask.clientId ? (a.subTask.repeats ? ("repeats" as const) : ("once" as const)) : null,
     status: a.status,
     assigneeId: a.assigneeId,
     dueDate: isoDay(a.dueDate),
@@ -440,6 +442,18 @@ export default async function AssignmentDetailPage({
               timerRunningElsewhere={Boolean(
                 timer && !activityIds.includes(timer.activityId ?? "")
               )}
+              // A step just for this client, in a period still being worked.
+              addSteps={
+                periodName && activities.length > 0 && !completed && assignment.active && !assignment.client.archivedAt
+                  ? {
+                      clientId,
+                      projectId,
+                      instance,
+                      periodName,
+                      clientName: assignment.client.companyName,
+                    }
+                  : null
+              }
             />
           )}
           {tab === "files" && (

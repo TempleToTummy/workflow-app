@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import type { ActivityStatus, SubtaskKind } from "@prisma/client";
 import { StatusSelect } from "@/components/status-select";
 import {
+  addClientStep,
+  removeClientStep,
   addActivitySubtask,
   deleteActivitySubtask,
   setActivityAssignee,
@@ -28,6 +30,8 @@ export type ChecklistSubtask = {
 
 export type ChecklistStep = {
   id: string;
+  // The step itself (ProjectSubTask) — needed to remove a client step.
+  subTaskId: string;
   seq: number;
   name: string;
   status: ActivityStatus;
@@ -55,6 +59,19 @@ export type ChecklistStep = {
   // Open client requests hanging off this step, so the row says the work is
   // blocked on somebody outside the firm rather than looking merely untouched.
   openRequests: number;
+  // A step for this client only (src/lib/engagement-steps.ts): "repeats" in
+  // every period, "once" in this period only. null = the project's own step.
+  clientStep: "once" | "repeats" | null;
+};
+
+// Where a client step being added goes. null = adding steps isn't offered
+// (a finished period, an inactive engagement).
+export type ClientStepTarget = {
+  clientId: string;
+  projectId: string;
+  instance: number;
+  periodName: string;
+  clientName: string;
 };
 
 type Employee = { id: string; name: string };
@@ -71,6 +88,7 @@ export function AssignmentChecklist({
   // True when a timer is running on some other task, so each step's button can
   // say what pressing it will do.
   timerRunningElsewhere,
+  addSteps = null,
 }: {
   steps: ChecklistStep[];
   employees: Employee[];
@@ -78,7 +96,11 @@ export function AssignmentChecklist({
   currentUserId: string;
   isAdmin: boolean;
   timerRunningElsewhere: boolean;
+  addSteps?: ClientStepTarget | null;
 }) {
+  // The position a new client step is being typed in for, if any.
+  const [insertAt, setInsertAt] = useState<number | null>(null);
+
   if (steps.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-sm text-ink-muted">
@@ -87,21 +109,163 @@ export function AssignmentChecklist({
     );
   }
 
-  return (
-    <ol className="flex flex-col gap-2">
-      {steps.map((step, i) => (
-        <StepRow
-          key={step.id}
-          step={step}
-          index={i}
-          employees={employees}
-          people={people}
-          currentUserId={currentUserId}
-          isAdmin={isAdmin}
-          timerRunningElsewhere={timerRunningElsewhere}
+  function slot(position: number) {
+    if (!addSteps) return null;
+    if (insertAt === position) {
+      return (
+        <ClientStepForm
+          key={`form-${position}`}
+          target={addSteps}
+          position={position}
+          total={steps.length}
+          onDone={() => setInsertAt(null)}
         />
-      ))}
-    </ol>
+      );
+    }
+    return (
+      <li key={`slot-${position}`} className="group/slot relative -my-1 h-2">
+        <button
+          type="button"
+          onClick={() => setInsertAt(position)}
+          className="absolute inset-x-8 top-1/2 z-[1] flex -translate-y-1/2 items-center gap-2 opacity-0 transition-opacity focus:opacity-100 group-hover/slot:opacity-100"
+          aria-label={`Insert a step ${position} for ${addSteps.clientName} here`}
+        >
+          <span className="h-px flex-1 bg-accent/50" />
+          <span className="rounded-full border border-accent/50 bg-surface px-2 py-0.5 text-[10px] font-medium text-accent">
+            + Insert step {position} for {addSteps.clientName}
+          </span>
+          <span className="h-px flex-1 bg-accent/50" />
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <div>
+      <ol className="flex flex-col gap-2">
+        {slot(1)}
+        {steps.map((step, i) => [
+          <StepRow
+            key={step.id}
+            step={step}
+            index={i}
+            employees={employees}
+            people={people}
+            currentUserId={currentUserId}
+            isAdmin={isAdmin}
+            timerRunningElsewhere={timerRunningElsewhere}
+            target={addSteps}
+          />,
+          // The last gap is the "add at the end" button below, not a slot.
+          i < steps.length - 1 ? slot(i + 2) : insertAt === steps.length + 1 ? slot(i + 2) : null,
+        ])}
+      </ol>
+      {addSteps && insertAt === null && (
+        <button
+          type="button"
+          onClick={() => setInsertAt(steps.length + 1)}
+          className="mt-3 rounded-full border border-dashed border-line px-3 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-accent"
+        >
+          + Add a step for {addSteps.clientName} only
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Adding a step for this client only: its name, where it goes, and whether it
+// repeats. The template and every other client are untouched.
+function ClientStepForm({
+  target,
+  position,
+  total,
+  onDone,
+}: {
+  target: ClientStepTarget;
+  position: number;
+  total: number;
+  onDone: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [at, setAt] = useState(position);
+  const [repeats, setRepeats] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function save() {
+    if (!name.trim() || isPending) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await addClientStep({ ...target, name, position: at, repeats });
+        onDone();
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't add the step.");
+      }
+    });
+  }
+
+  return (
+    <li className="rounded-lg border border-accent/40 bg-accent-soft/40 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={at}
+          onChange={(e) => setAt(Number(e.target.value))}
+          disabled={isPending}
+          aria-label="Step number"
+          className={selectClass}
+        >
+          {Array.from({ length: total + 1 }, (_, i) => i + 1).map((n) => (
+            <option key={n} value={n}>
+              Step {n}
+            </option>
+          ))}
+        </select>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              save();
+            } else if (e.key === "Escape") {
+              onDone();
+            }
+          }}
+          maxLength={200}
+          disabled={isPending}
+          placeholder={`New step for ${target.clientName} — the steps below move down one`}
+          className="min-w-[12rem] flex-1 rounded-md border border-line bg-surface px-2 py-1 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
+        />
+        <button
+          type="button"
+          onClick={save}
+          disabled={isPending || !name.trim()}
+          className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+        >
+          {isPending ? "Adding…" : "Add step"}
+        </button>
+        <button type="button" onClick={onDone} className="text-xs text-ink-muted hover:text-ink">
+          Cancel
+        </button>
+      </div>
+      <fieldset className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink">
+        <legend className="sr-only">How often</legend>
+        <label className="flex items-center gap-1.5">
+          <input type="radio" checked={!repeats} onChange={() => setRepeats(false)} disabled={isPending} />
+          This period only
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="radio" checked={repeats} onChange={() => setRepeats(true)} disabled={isPending} />
+          Every period from now on
+        </label>
+        <span className="text-ink-muted">Only {target.clientName} gets it — not the project&apos;s other clients.</span>
+      </fieldset>
+      {error && <p className="mt-1 text-xs text-overdue">{error}</p>}
+    </li>
   );
 }
 
@@ -118,6 +282,7 @@ function StepRow({
   currentUserId,
   isAdmin,
   timerRunningElsewhere,
+  target,
 }: {
   step: ChecklistStep;
   index: number;
@@ -126,6 +291,7 @@ function StepRow({
   currentUserId: string;
   isAdmin: boolean;
   timerRunningElsewhere: boolean;
+  target: ClientStepTarget | null;
 }) {
   const router = useRouter();
   // Open a step that already has something to show — subtasks or a
@@ -205,6 +371,28 @@ function StepRow({
     });
   }
 
+  function handleRemoveClientStep() {
+    if (!target) return;
+    const more =
+      step.clientStep === "repeats" ? " It also stops being added to future periods." : "";
+    if (!window.confirm(`Remove "${step.name}" from ${target.clientName}'s checklist?${more}`)) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await removeClientStep({
+          clientId: target.clientId,
+          projectId: target.projectId,
+          instance: target.instance,
+          periodName: target.periodName,
+          subTaskId: step.subTaskId,
+        });
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't remove the step.");
+      }
+    });
+  }
+
   function handleAssignee(value: string) {
     setError(null);
     startTransition(async () => {
@@ -248,6 +436,26 @@ function StepRow({
             <p className="line-clamp-2 font-medium leading-snug text-ink" title={step.name}>
               {step.name}
             </p>
+            {step.clientStep && (
+              <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-accent">
+                <span
+                  className="whitespace-nowrap"
+                  title={`A step for ${target?.clientName ?? "this client"} only — not on the project's other clients.`}
+                >
+                  This client only · {step.clientStep === "repeats" ? "every period" : "this period"}
+                </span>
+                {target && step.status !== "DONE" && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveClientStep}
+                    disabled={isPending}
+                    className="text-ink-muted underline-offset-2 hover:text-overdue hover:underline disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </p>
+            )}
             {step.completedBy && step.completedAt && (
               <p className="text-[11px] text-ink-muted">
                 Signed off by {step.completedBy} · {step.completedAt}

@@ -428,13 +428,34 @@ model Project {
   clientRequests    ClientRequest[]
 }
 
+// A checklist step. Normally a shared template step, put on projects through
+// ProjectTaskMap. A CLIENT STEP instead belongs to one engagement only
+// ("Bluepoint Bakery's bookkeeping also needs the bank loan statement"): it
+// has clientId/projectId/instance set and no ProjectTaskMap rows, and it never
+// appears in the master list or on any other client. See
+// src/lib/engagement-steps.ts.
 model ProjectSubTask {
   id   String  @id @default(cuid())
   name String
   note String?
 
+  // The engagement a client step belongs to. All null for a template step.
+  clientId       String?
+  projectId      String?
+  instance       Int?
+  // true = added to every period of that engagement from now on; false = only
+  // the period it was added to.
+  repeats        Boolean   @default(false)
+  // Where a client step sits: straight after this step (a template step or
+  // another client step), so it moves with it when the template is reordered.
+  // null = before the first step.
+  afterSubTaskId String?
+  createdAt      DateTime? @default(now())
+
   taskMaps   ProjectTaskMap[]
   activities ClientActivity[]
+
+  @@index([clientId, projectId, instance])
 }
 
 // The ordered checklist for a project: which subtasks, in what sequence.

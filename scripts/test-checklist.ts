@@ -2,7 +2,7 @@
 // No framework, no database:
 //
 //   ./node_modules/.bin/tsx scripts/test-checklist.ts
-import { planChecklist, canAddToOpenPeriod, isCompletedStepName } from "../src/lib/checklist-rules";
+import { planChecklist, canAddToOpenPeriod, isCompletedStepName, engagementOrder } from "../src/lib/checklist-rules";
 import { check, section, finish } from "./harness";
 
 const steps = ["s1", "s2", "s3", "s4", "s5", "s6", "done"];
@@ -44,5 +44,44 @@ check("ahead of the work: added", canAddToOpenPeriod(rows, 5), true);
 check("right at the step being worked: added", canAddToOpenPeriod(rows, 4), true);
 check("behind finished work: not added", canAddToOpenPeriod(rows, 2), false);
 check("a period that hasn't started: added anywhere", canAddToOpenPeriod([{ position: 1, done: false }], 1), true);
+
+section("one client's own steps (Bluepoint Bakery's bookkeeping)");
+{
+  const template = ["s1", "s2", "s3", "s4"];
+  check("no client steps → the template", engagementOrder(template, []), template);
+  check(
+    "inserted behind step 2 → becomes step 3",
+    engagementOrder(template, [{ id: "loan", after: "s2" }]),
+    ["s1", "s2", "loan", "s3", "s4"]
+  );
+  check("inserted at the top", engagementOrder(template, [{ id: "first", after: null }])[0], "first");
+  check(
+    "a later one at the same spot goes in front, where it was put",
+    engagementOrder(template, [
+      { id: "older", after: "s2" },
+      { id: "newer", after: "s2" },
+    ]),
+    ["s1", "s2", "newer", "older", "s3", "s4"]
+  );
+  check(
+    "behind another client step",
+    engagementOrder(template, [
+      { id: "a", after: "s1" },
+      { id: "b", after: "a" },
+    ]),
+    ["s1", "a", "b", "s2", "s3", "s4"]
+  );
+  check(
+    "moves with its step when the template is reordered",
+    engagementOrder(["s3", "s1", "s2", "s4"], [{ id: "loan", after: "s2" }]),
+    ["s3", "s1", "s2", "loan", "s4"]
+  );
+  check(
+    "a template step inserted later keeps its own place",
+    engagementOrder(["s1", "s2", "new", "s3", "s4"], [{ id: "loan", after: "s2" }]),
+    ["s1", "s2", "loan", "new", "s3", "s4"]
+  );
+  check("anchor gone → last", engagementOrder(template, [{ id: "x", after: "gone" }]).slice(-1), ["x"]);
+}
 
 finish();

@@ -8,7 +8,7 @@ export default async function ProjectsTaskMapPage() {
       include: { subtasks: { include: { subTask: true }, orderBy: { sequence: "asc" } } },
       orderBy: { name: "asc" },
     }),
-    prisma.projectSubTask.findMany({ orderBy: { name: "asc" } }),
+    prisma.projectSubTask.findMany({ where: { clientId: null }, orderBy: { name: "asc" } }),
   ]);
 
   return (

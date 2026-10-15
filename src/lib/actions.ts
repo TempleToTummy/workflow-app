@@ -35,6 +35,8 @@ import { maskSsn, maskTaxId, protectSsn, protectTaxId } from "@/lib/sensitive-fi
 import { rateLimit } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/auth";
 import { normalizeChecklist } from "@/lib/checklist";
+import { canAddToOpenPeriod } from "@/lib/checklist-rules";
+import { engagementStepOrder, renumberPeriod } from "@/lib/engagement-steps";
 import {
   parseInstance,
   cleanEngagementName,
@@ -692,6 +694,202 @@ export async function startNextPeriod(clientId: string, projectId: string, insta
   revalidatePath("/");
   revalidatePath("/tasks");
   return { periodName: next, tasks: result.activitiesCreated };
+}
+
+// --- One client's own steps ------------------------------------------------
+//
+// A step for this engagement only — "Bluepoint Bakery's bookkeeping also needs
+// the loan statement" — inserted at a position in the period being worked.
+// `repeats` adds it to every later period too (and to a later period already
+// open, if its work hasn't got past that point); otherwise it's this period
+// only. The project's template and every other client are untouched. See
+// src/lib/engagement-steps.ts.
+//
+// Anyone who can work the engagement can do this, like the engagement's own
+// owner and deadline: they're the ones who know what this client needs.
+export async function addClientStep(input: {
+  clientId: string;
+  projectId: string;
+  instance?: number;
+  periodName: string;
+  name: string;
+  // The number the new step takes in this period (1 = first).
+  position: number;
+  repeats: boolean;
+}) {
+  const instance = input.instance ?? 1;
+  const { clientId, projectId, periodName } = input;
+  const user = await requireEngagementAccess(clientId, projectId, instance);
+  const key = { clientId, projectId, instance };
+  const name = input.name.replace(/\s+/g, " ").trim();
+  if (!name) throw new Error("Give the step a name.");
+  if (name.length > 200) throw new Error("Keep the step name under 200 characters.");
+
+  const engagement = await prisma.projectClientMap.findUniqueOrThrow({
+    where: engagementId(key),
+    include: { project: { select: { name: true } }, client: { select: { companyName: true, archivedAt: true } } },
+  });
+  if (!engagement.active || engagement.client.archivedAt) throw new Error("This engagement isn't active.");
+
+  const rows = await prisma.clientActivity.findMany({
+    where: { ...engagementWhere(key), periodName },
+    orderBy: { taskSeqNo: "asc" },
+    select: { subTaskId: true, status: true },
+  });
+  if (rows.length === 0) throw new Error("That period isn't open for this client.");
+  if (rows.every((r) => r.status === "DONE")) {
+    throw new Error("That period is finished. Add the step to a period still in progress.");
+  }
+
+  const at = Math.max(1, Math.min(rows.length + 1, Math.trunc(Number(input.position) || rows.length + 1)));
+  const after = at === 1 ? null : rows[at - 2].subTaskId;
+
+  const step = await prisma.projectSubTask.create({
+    data: { name, clientId, projectId, instance, repeats: Boolean(input.repeats), afterSubTaskId: after },
+  });
+  const actor = actorFrom(user);
+  await openPeriodForAssignment({ clientId, projectId, instance, periodName, onlySubTaskIds: [step.id], actor, audit: false });
+
+  // Every-period steps also join later periods that are already open (one
+  // opened early), unless their work is already past that point.
+  let alsoAddedTo = 0;
+  if (step.repeats) {
+    const viewed = await prisma.accountingPeriod.findUnique({ where: { name: periodName } });
+    const later = await prisma.clientActivity.findMany({
+      where: {
+        ...engagementWhere(key),
+        periodName: { not: periodName },
+        ...(viewed ? { period: { startDate: { gt: viewed.startDate } } } : {}),
+      },
+      select: { periodName: true, subTaskId: true, status: true },
+    });
+    const order = await engagementStepOrder(key);
+    const rank = new Map(order.map((id, i) => [id, i + 1]));
+    const byPeriod = new Map<string, typeof later>();
+    for (const r of later) byPeriod.set(r.periodName, [...(byPeriod.get(r.periodName) ?? []), r]);
+    for (const [other, list] of byPeriod) {
+      if (list.every((r) => r.status === "DONE")) continue;
+      const positions = list.map((r) => ({ position: rank.get(r.subTaskId) ?? 1e9, done: r.status === "DONE" }));
+      if (!canAddToOpenPeriod(positions, rank.get(step.id)!)) continue;
+      await openPeriodForAssignment({
+        clientId,
+        projectId,
+        instance,
+        periodName: other,
+        onlySubTaskIds: [step.id],
+        actor,
+        audit: false,
+      });
+      alsoAddedTo += 1;
+    }
+  }
+
+  await recordAudit({
+    entityType: "ProjectClientMap",
+    entityId: engagementKeyString(key),
+    action: AUDIT.CHECKLIST_CHANGED,
+    summary:
+      `Added step ${at} "${name}" for this client only — ` +
+      (step.repeats ? "every period from " : "") +
+      formatPeriodName(periodName) +
+      (alsoAddedTo > 0 ? ` (also added to ${alsoAddedTo} later period${alsoAddedTo === 1 ? "" : "s"} already open)` : ""),
+    toValue: name,
+    clientId,
+    projectId,
+    instance,
+    periodName,
+    contextLabel: `${engagement.client.companyName} · ${engagementLabel(engagement.project.name, engagement.name, instance)}`,
+    actor,
+  });
+
+  revalidateAssignment(clientId, projectId);
+  revalidatePath("/tasks");
+  return { position: at, alsoAddedTo };
+}
+
+// Takes a client step off. From this period and any later open one where it
+// has no work recorded; a repeating step also stops being added to future
+// periods. A copy that's done, or has time or comments on it, stays as the
+// record — mark it done instead.
+export async function removeClientStep(input: {
+  clientId: string;
+  projectId: string;
+  instance?: number;
+  periodName: string;
+  subTaskId: string;
+}) {
+  const instance = input.instance ?? 1;
+  const { clientId, projectId, periodName, subTaskId } = input;
+  const user = await requireEngagementAccess(clientId, projectId, instance);
+  const key = { clientId, projectId, instance };
+
+  const step = await prisma.projectSubTask.findUnique({ where: { id: subTaskId } });
+  if (!step || step.clientId !== clientId || step.projectId !== projectId || step.instance !== instance) {
+    throw new Error("That step isn't one of this client's own steps.");
+  }
+
+  const rows = await prisma.clientActivity.findMany({
+    where: { ...engagementWhere(key), subTaskId },
+    include: {
+      period: { select: { startDate: true } },
+      _count: { select: { timeEntries: true, comments: true } },
+    },
+  });
+  const here = rows.find((r) => r.periodName === periodName);
+  if (here && (here.status === "DONE" || here._count.timeEntries > 0 || here._count.comments > 0)) {
+    throw new Error(
+      here.status === "DONE"
+        ? "This step is already done in this period, so it stays as the record."
+        : "This step has time or comments on it, so it stays as the record. Mark it done instead."
+    );
+  }
+  const from = here?.period.startDate ?? null;
+  const removable = rows.filter(
+    (r) =>
+      r.status !== "DONE" &&
+      r._count.timeEntries === 0 &&
+      r._count.comments === 0 &&
+      (r.periodName === periodName || (from && r.period.startDate > from))
+  );
+
+  await prisma.$transaction([
+    prisma.clientActivity.deleteMany({ where: { id: { in: removable.map((r) => r.id) } } }),
+    prisma.projectSubTask.update({ where: { id: subTaskId }, data: { repeats: false } }),
+  ]);
+  if (removable.length === rows.length) {
+    // Nothing left that uses it: it was only ever this client's.
+    await prisma.projectSubTask.delete({ where: { id: subTaskId } });
+  }
+  const order = await engagementStepOrder(key);
+  for (const p of new Set(removable.map((r) => r.periodName))) await renumberPeriod(key, p, order);
+
+  const engagement = await prisma.projectClientMap.findUnique({
+    where: engagementId(key),
+    include: { project: { select: { name: true } }, client: { select: { companyName: true } } },
+  });
+  await recordAudit({
+    entityType: "ProjectClientMap",
+    entityId: engagementKeyString(key),
+    action: AUDIT.CHECKLIST_CHANGED,
+    summary: `Removed this client's step "${step.name}" from ${formatPeriodName(periodName)}${
+      step.repeats ? " and future periods" : ""
+    }`,
+    fromValue: step.name,
+    clientId,
+    projectId,
+    instance,
+    periodName,
+    contextLabel: engagement
+      ? `${engagement.client.companyName} · ${engagementLabel(engagement.project.name, engagement.name, instance)}`
+      : undefined,
+    actor: actorFrom(user),
+  });
+
+  // Removing the only open step left can finish the period.
+  await maybeRollPeriodForward(clientId, projectId, periodName, instance);
+  revalidateAssignment(clientId, projectId);
+  revalidatePath("/tasks");
+  return { removed: removable.length };
 }
 
 // --- Client contacts --------------------------------------------------------
@@ -1374,6 +1572,8 @@ export async function addProjectTaskMap(
   if (existing) {
     throw new Error("That task is already on this project's checklist.");
   }
+  const sub = await prisma.projectSubTask.findUniqueOrThrow({ where: { id: subTaskId }, select: { clientId: true } });
+  if (sub.clientId) throw new Error("That step belongs to one client's engagement and can't go on a project.");
   await prisma.projectTaskMap.create({ data: { projectId, subTaskId, sequence: 0 } });
   await normalizeChecklist(projectId, {
     insert: { id: subTaskId, position },
@@ -2044,6 +2244,15 @@ async function recomputeDueDates(scope: {
   ]);
   if (activities.length === 0) return 0;
 
+  // Client steps (not in the template) share the engagement's due date.
+  const templateIds = new Set(taskMaps.map((tm) => tm.subTaskId));
+  const stepOffsets = [
+    ...taskMaps.map((tm) => ({ subTaskId: tm.subTaskId, dueOffsetDays: tm.dueOffsetDays })),
+    ...[...new Set(activities.map((a) => a.subTaskId))]
+      .filter((id) => !templateIds.has(id))
+      .map((id) => ({ subTaskId: id, dueOffsetDays: null })),
+  ];
+
   const periods = await prisma.accountingPeriod.findMany({
     where: { name: { in: [...new Set(activities.map((a) => a.periodName))] } },
     select: { name: true, endDate: true },
@@ -2065,7 +2274,7 @@ async function recomputeDueDates(scope: {
       periodEnd: end,
       projectOffset: project!.dueOffsetDays,
       clientOverride: overrideByClient.get(`${clientId}:${instance}`) ?? null,
-      steps: taskMaps.map((tm) => ({ subTaskId: tm.subTaskId, dueOffsetDays: tm.dueOffsetDays })),
+      steps: stepOffsets,
     });
     resolved.set(key, map);
     return map;
@@ -2444,8 +2653,16 @@ export async function applyDefaultAssignees(
     }),
   ]);
 
+  // This client's own steps aren't in the template; they follow the
+  // engagement's owner like any step without a default of its own.
+  const templateIds = new Set(taskMaps.map((tm) => tm.subTaskId));
   const defaults = resolveDefaultAssignees({
-    steps: taskMaps,
+    steps: [
+      ...taskMaps,
+      ...unassigned
+        .filter((a) => !templateIds.has(a.subTaskId))
+        .map((a) => ({ subTaskId: a.subTaskId, defaultAssigneeId: null })),
+    ],
     engagementDefaultId: assignment.defaultAssigneeId,
     projectOwnerId: assignment.project.ownerId,
   });

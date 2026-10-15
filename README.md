@@ -220,6 +220,34 @@ unless their work is already past that point. Drag the handle to reorder.
 Each project has its own steps, including its own "Completed Y/N". The logic is
 in `src/lib/checklist.ts` / `checklist-rules.ts`.
 
+## Steps for one client only
+
+Sometimes one client needs an extra step that the project's other clients
+don't — Bluepoint Bakery's bookkeeping also needs the bank loan statement. On
+that client's engagement page, hover between two steps and click **+ Insert
+step N for Bluepoint Bakery**, or use **+ Add a step for Bluepoint Bakery
+only** under the list (pick the step number there; it works on touch screens
+too). Choose:
+
+- **This period only** — a one-off for the period you're looking at.
+- **Every period from now on** — also added to every later period, including
+  one already opened early (unless its work is already past that point).
+
+The steps below it move down one. It's marked "This client only" and follows
+the engagement's owner and due date. The project's checklist and every other
+client — including a second copy of the same project for the same client —
+are untouched. It stays right after the step it was inserted behind, so if an
+admin reorders or adds to the project's checklist, it moves with that step.
+
+**Remove** (next to the label) takes it off this period and any later open
+period where it has no work recorded, and stops it repeating. A copy that's
+done, or has time or comments on it, stays as the record.
+
+Steps are still finished in order, so a step inserted above work already in
+progress has to be done first. Client steps never appear in the master task
+list. Code: `src/lib/engagement-steps.ts`, `engagementOrder` in
+`src/lib/checklist-rules.ts`.
+
 ## Assignment is per project, not per task
 
 Who works on something is decided at the project level: tick projects on an

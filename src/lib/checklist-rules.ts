@@ -30,6 +30,30 @@ export function canAddToOpenPeriod(
   return !rows.some((r) => r.position >= position && r.done);
 }
 
+// One client's full checklist for an engagement: the project's template steps
+// with that client's own steps woven in. Each client step sits straight after
+// the step it was inserted behind (`after`, null = first), so it travels with
+// that step when the template is reordered. Client steps are applied oldest
+// first; a newer one inserted at the same spot lands in front of an older one,
+// exactly where it was put. A client step whose anchor is gone goes last.
+export function engagementOrder(
+  template: string[],
+  clientSteps: { id: string; after: string | null }[]
+): string[] {
+  const order = [...template];
+  for (const step of clientSteps) {
+    if (order.includes(step.id)) continue;
+    if (step.after === null) {
+      order.unshift(step.id);
+      continue;
+    }
+    const at = order.indexOf(step.after);
+    if (at === -1) order.push(step.id);
+    else order.splice(at + 1, 0, step.id);
+  }
+  return order;
+}
+
 // Names the per-project "Completed Y/N" step goes by. Used only by the data
 // upgrade that undoes the short-lived shared version of it.
 export function isCompletedStepName(name: string): boolean {

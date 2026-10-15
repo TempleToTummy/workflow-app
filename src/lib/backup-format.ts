@@ -28,9 +28,13 @@
 // Version 4: a client can run the same project more than once. Every
 // engagement-scoped table gained `instance` (default 1) and ProjectClientMap a
 // `name`; older rows restore as instance 1, which is exactly what they were.
+//
+// Version 5: client steps — ProjectSubTask gained clientId, projectId,
+// instance, repeats, afterSubTaskId and createdAt, all optional or defaulted,
+// so older rows restore as ordinary template steps.
 
 export const BACKUP_FORMAT = "workflow-backup";
-export const BACKUP_VERSION = 4;
+export const BACKUP_VERSION = 5;
 
 // Tables added after version 1, and the version that introduced each. A backup
 // older than that simply doesn't have the table, which restores as empty.

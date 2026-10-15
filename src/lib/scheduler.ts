@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { clientStepsFor, engagementStepOrder, renumberPeriod } from "@/lib/engagement-steps";
 import {
   currentPeriodName,
   nextPeriodName,
@@ -109,6 +110,8 @@ export async function openPeriodForAssignment(input: {
 
   // Who to credit in the audit log. Defaults to the system (cron).
   actor?: { id: string | null; label: string };
+  // false when the caller records its own, more specific audit entry.
+  audit?: boolean;
 }): Promise<{ periodCreated: boolean; activitiesCreated: number }> {
   const { clientId, projectId, periodName } = input;
   const instance = input.instance ?? 1;
@@ -154,13 +157,31 @@ export async function openPeriodForAssignment(input: {
     existingPeriod ??
     (await resolvePeriod(project.recurringId, project.recurring.type, periodName));
 
-  const taskMaps = await prisma.projectTaskMap.findMany({
+  const templateMaps = await prisma.projectTaskMap.findMany({
     where: { projectId },
     orderBy: { sequence: "asc" },
   });
-  if (taskMaps.length === 0) {
+  if (templateMaps.length === 0) {
     return { periodCreated: !existingPeriod, activitiesCreated: 0 };
   }
+
+  // This client's own steps (src/lib/engagement-steps.ts): the ones that
+  // repeat go into every period; a one-off only when it's asked for by id.
+  const only = input.onlySubTaskIds ? new Set(input.onlySubTaskIds) : null;
+  const clientSteps = await clientStepsFor(key);
+  const ownSteps = clientSteps.filter((c) => c.repeats || only?.has(c.id));
+  // Client steps have no step-level default or offset: they follow the
+  // engagement's owner and due date.
+  const taskMaps = [
+    ...templateMaps,
+    ...ownSteps.map((c) => ({
+      subTaskId: c.id,
+      sequence: templateMaps.length + 1,
+      defaultAssigneeId: null,
+      dueOffsetDays: null,
+      estimatedMinutes: null,
+    })),
+  ];
 
   // SQLite has no skipDuplicates on createMany, so dedupe explicitly against
   // what's already there. This is what makes the whole job safely re-runnable.
@@ -169,7 +190,6 @@ export async function openPeriodForAssignment(input: {
     select: { subTaskId: true },
   });
   const have = new Set(already.map((a) => a.subTaskId));
-  const only = input.onlySubTaskIds ? new Set(input.onlySubTaskIds) : null;
   const missing = taskMaps.filter((tm) => !have.has(tm.subTaskId) && (!only || only.has(tm.subTaskId)));
   if (missing.length === 0) {
     return { periodCreated: !existingPeriod, activitiesCreated: 0 };
@@ -213,6 +233,14 @@ export async function openPeriodForAssignment(input: {
       estimatedMinutes: tm.estimatedMinutes ?? null,
     })),
   });
+
+  // With client steps woven in, the template's numbers aren't this period's:
+  // number the period in the engagement's own order.
+  if (clientSteps.length > 0) {
+    await renumberPeriod(key, periodName, await engagementStepOrder(key, clientSteps));
+  }
+
+  if (input.audit === false) return { periodCreated: !existingPeriod, activitiesCreated: missing.length };
 
   const assignedCount = missing.filter((tm) => defaultAssignees.has(tm.subTaskId)).length;
   await recordAudit({
