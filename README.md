@@ -293,6 +293,14 @@ npm run db:upgrade -- --apply     # renumbers checklists 1, 2, 3…; gives each 
 On a host, `npm run start:deploy` does all of this before starting the server
 (see below).
 
+## Deploying on Oracle Cloud (Docker)
+
+`deploy/oci/` runs the app in Docker on an Always Free OCI Arm VM, behind
+Caddy for HTTPS, with the daily work generation and backups scheduled on the
+VM. **[deploy/oci/README.md](deploy/oci/README.md)** walks through the whole
+setup: the VCN and its public subnet, the security list, the VM, DNS, secrets
+and the first deploy. The `Dockerfile` at the root works on any Docker host.
+
 ## Deploying on Render
 
 `render.yaml` describes the service. For a service created by hand, set these

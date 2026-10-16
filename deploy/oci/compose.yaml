@@ -1,0 +1,54 @@
+# The app and its HTTPS front door on one VM. See README.md in this folder.
+#
+#   docker compose -f deploy/oci/compose.yaml up -d --build
+#
+# Settings come from deploy/oci/.env (copy .env.example). Data lives on the
+# host under DATA_ROOT (default /srv/workflow), outside the containers, so a
+# rebuild or redeploy never touches it.
+name: workflow
+
+services:
+  app:
+    build:
+      context: ../..
+    image: workflow-app:latest
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      - ${DATA_ROOT:-/srv/workflow}/data:/data
+      - ${DATA_ROOT:-/srv/workflow}/storage:/app/.storage
+    # Not published: only Caddy talks to the app.
+    expose:
+      - "3000"
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  # Caddy's TLS certificates and ACME account. Kept so restarts don't re-issue.
+  caddy_data:
+  caddy_config:
