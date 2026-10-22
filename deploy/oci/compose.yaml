@@ -15,9 +15,11 @@ services:
     restart: unless-stopped
     init: true
     env_file: .env
+    # :Z relabels the folders for SELinux (on by default on Oracle Linux);
+    # without it the container can't read or write them. Ignored elsewhere.
     volumes:
-      - ${DATA_ROOT:-/srv/workflow}/data:/data
-      - ${DATA_ROOT:-/srv/workflow}/storage:/app/.storage
+      - ${DATA_ROOT:-/srv/workflow}/data:/data:Z
+      - ${DATA_ROOT:-/srv/workflow}/storage:/app/.storage:Z
     # Not published: only Caddy talks to the app.
     expose:
       - "3000"
@@ -37,7 +39,7 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
