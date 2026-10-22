@@ -295,11 +295,22 @@ On a host, `npm run start:deploy` does all of this before starting the server
 
 ## Deploying on Oracle Cloud (Docker)
 
-`deploy/oci/` runs the app in Docker on an Always Free OCI Arm VM, behind
-Caddy for HTTPS, with the daily work generation and backups scheduled on the
-VM. **[deploy/oci/README.md](deploy/oci/README.md)** walks through the whole
-setup: the VCN and its public subnet, the security list, the VM, DNS, secrets
-and the first deploy. The `Dockerfile` at the root works on any Docker host.
+`deploy/oci/` runs the app in Docker on an OCI Arm VM, behind Caddy for HTTPS,
+against MySQL HeatWave on the VCN's private subnet, with the daily work
+generation and backups scheduled on the VM. **[deploy/oci/README.md](deploy/oci/README.md)**
+walks through the setup. The `Dockerfile` at the root works on any Docker host.
+
+The database engine is chosen when the image is built: the schema in git stays
+on SQLite for local development, and the `DB_PROVIDER` build arg (`mysql`,
+`postgresql` or `sqlite`) rewrites it first with `scripts/schema-provider.ts`.
+On MySQL that also turns long text fields into `TEXT`, since Prisma's default
+there is `VARCHAR(191)`.
+
+In production (`NODE_ENV=production`, which the image sets) the first start
+loads the service catalog and email templates and prints a one-time
+`/invite/<token>` link for `FIRST_ADMIN_EMAIL` to the server log
+(`prisma/setup.ts`). There's no demo data and no default password; the demo
+seed below only runs outside production.
 
 ## Deploying on Render
 

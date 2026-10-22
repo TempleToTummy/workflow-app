@@ -11,6 +11,10 @@ services:
   app:
     build:
       context: ../..
+      args:
+        # The database engine DATABASE_URL points at. Changing it needs a
+        # rebuild (deploy.sh does one).
+        DB_PROVIDER: ${DB_PROVIDER:-mysql}
     image: workflow-app:latest
     restart: unless-stopped
     init: true

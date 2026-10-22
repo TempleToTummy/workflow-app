@@ -1,15 +1,16 @@
 # Deploying on Oracle Cloud (OCI) — Always Free
 
-One Arm VM in a public subnet runs two containers:
+One Arm VM in a public subnet runs two containers; the database is MySQL
+HeatWave in the private subnet:
 
 ```
- Browser ──HTTPS──► VCN public subnet ─► VM (Ubuntu 24.04, Ampere A1)
+ Browser ──HTTPS──► VCN public subnet ─► VM (Oracle Linux or Ubuntu, Arm)
                     (security list:        ├─ caddy  :80/:443  TLS (Let's Encrypt), HTTP→HTTPS
                      80, 443 open;         └─ app    :3000     Next.js (not published)
                      22 from your IP)          │
-                                               └─ /srv/workflow/data     SQLite DB + backups
+                                               └─ /srv/workflow/data     backups
                                                   /srv/workflow/storage  encrypted uploads
-                    VCN private subnet ─► (later) MySQL HeatWave, no internet access
+                    VCN private subnet ─► MySQL HeatWave (private IP only, no internet access)
 ```
 
 | File | What it is |
@@ -18,17 +19,46 @@ One Arm VM in a public subnet runs two containers:
 | `compose.yaml` | The app + Caddy, data mounted from `/srv/workflow`. |
 | `Caddyfile` | HTTPS, certificate renewal, 20 MB upload cap, no access log. |
 | `.env.example` | Settings template → copy to `.env` on the server. |
-| `setup-vm.sh` | One-time VM setup: firewall, Docker, data folders, daily jobs. |
+| `setup-vm.sh` | One-time VM setup on **Ubuntu**: firewall, Docker, data folders, daily jobs. On Oracle Linux, do the same by hand (see "Oracle Linux" below). |
 | `deploy.sh` | First deploy and every update: pull, build, restart, wait for healthy. |
 | `ops.sh` | `generate-periods`, `backup`, `logs`, `status`. |
 
-> **Before real client data goes in.** On an empty database the first start
-> seeds a demo admin, **`admin@workflow.test` / `admin1234`**, plus sample
-> clients. Sign in and change that password the moment the site is up (step 10),
-> and don't load real data until the first-run setup is replaced with a proper
-> one. The database is SQLite on the VM's disk until the move to MySQL
-> HeatWave; the layout here doesn't change when that happens, only
-> `DATABASE_URL`.
+> **First run.** The first start loads the firm's service catalog and email
+> templates and prints a one-time link for `FIRST_ADMIN_EMAIL` to set their
+> password (step 10). There is no demo data and no default password.
+
+## Oracle Linux (the `opc` user)
+
+`setup-vm.sh` assumes Ubuntu. On Oracle Linux 9 the equivalents are:
+
+```bash
+sudo dnf install -y git dnf-plugins-core nano
+sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+sudo dnf install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker && sudo usermod -aG docker opc     # then log out and back in
+sudo firewall-cmd --permanent --add-service=http --add-service=https && sudo firewall-cmd --reload
+sudo mkdir -p /srv/workflow/{data,storage,logs}
+sudo chown 1000:1000 /srv/workflow/data /srv/workflow/storage && sudo chmod 750 /srv/workflow/data /srv/workflow/storage
+sudo chown opc:opc /srv/workflow/logs
+```
+
+SELinux stays enforcing; `compose.yaml` labels its volumes (`:Z`) so the
+containers can use them. The daily jobs go in `/etc/cron.d/workflow` as in
+step 11, with `opc` as the user and `/home/opc/workflow-app` as the path, then
+`sudo systemctl enable --now crond`.
+
+## The database (MySQL HeatWave)
+
+Give the app its own login, limited to its database, rather than the admin one:
+
+```sql
+CREATE USER 'workflow_app'@'%' IDENTIFIED BY '<openssl rand -hex 24>';
+GRANT ALL PRIVILEGES ON ktaxdb.* TO 'workflow_app'@'%';
+```
+
+Then in `.env`: `DB_PROVIDER="mysql"` and
+`DATABASE_URL="mysql://workflow_app:<password>@<db private ip>:3306/ktaxdb?sslaccept=accept_invalid_certs"`.
+The private subnet's security list needs TCP 3306 from the public subnet only.
 
 ---
 
@@ -142,7 +172,8 @@ echo "DATA_INDEX_KEY=\"$(openssl rand -base64 32)\""
 echo "AUTH_SECRET=\"$(openssl rand -hex 32)\""
 echo "CRON_SECRET=\"$(openssl rand -hex 32)\""
 
-nano deploy/oci/.env   # paste those in; set DOMAIN, APP_URL, ACME_EMAIL, email settings
+nano deploy/oci/.env   # paste those in; set DOMAIN, APP_URL, ACME_EMAIL, DATABASE_URL,
+                       # FIRST_ADMIN_EMAIL / FIRST_ADMIN_NAME and the email settings
 ```
 
 **Put `DATA_ENCRYPTION_KEYS` and `DATA_INDEX_KEY` in the firm's password
@@ -160,9 +191,15 @@ open `https://workflow.yourfirm.com` — the padlock should be there.
 
 ## 10. First sign-in
 
-Sign in as `admin@workflow.test` / `admin1234` and **change the password
-immediately** (Account page), then turn on two-factor. Create real staff
-accounts from Admin → Employees.
+The first start prints a one-time link for `FIRST_ADMIN_EMAIL`:
+
+```bash
+docker compose -f deploy/oci/compose.yaml logs app | grep -A3 "First admin"
+```
+
+Open it, set the password, then turn on two-factor (Account page) and create
+staff accounts from Admin → Employees. The link is valid for 7 days; until
+it's used, each restart prints a new one and the old one stops working.
 
 ## 11. Check the daily jobs
 
@@ -214,10 +251,8 @@ back on their own.
 | `deploy.sh` says not healthy | It prints the app logs. A missing secret or a bad `DATABASE_URL` shows up there. |
 | "Out of capacity" creating the VM | Another availability domain, or retry later. |
 
-## Later: MySQL HeatWave in the private subnet
+## Without a database server
 
-Once the app supports MySQL: create the HeatWave DB system (Always Free) in
-`workflow-vcn`'s **private** subnet, add an ingress rule on the *private*
-subnet's security list for TCP 3306 from `10.0.0.0/24` only, set
-`DATABASE_URL` in `.env` to the DB system's private IP, and redeploy. The
-database is never reachable from the internet.
+`DB_PROVIDER="sqlite"` with `DATABASE_URL="file:/data/workflow.db"` keeps the
+database as a file in `/srv/workflow/data` instead. Changing `DB_PROVIDER`
+needs a rebuild, which `deploy.sh` does.

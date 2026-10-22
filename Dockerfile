@@ -20,9 +20,15 @@ COPY prisma ./prisma
 RUN npm ci --include=dev --no-audit --no-fund
 
 FROM base AS build
+# Which database the image is built for: sqlite (the default, as in git),
+# mysql or postgresql. Prisma generates its client for one engine, so the
+# schema is switched before generating (scripts/schema-provider.ts).
+ARG DB_PROVIDER=sqlite
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npx prisma generate && npm run build
+RUN npx tsx scripts/schema-provider.ts "$DB_PROVIDER" \
+  && npx prisma generate \
+  && npm run build
 
 FROM base AS runner
 ENV NODE_ENV=production \

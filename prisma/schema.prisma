@@ -27,15 +27,18 @@
 // SSNs (CORP_CONTACT.OWNER_SSN_NO). The database holds ciphertext, a masked
 // last-4 for display, and for tax IDs a keyed blind index for uniqueness.
 //
-// Runs on SQLite locally (zero setup). Switch provider to "postgresql" and
-// point DATABASE_URL at Supabase when you're ready to deploy.
+// Runs on SQLite locally (zero setup). Production builds switch the provider
+// to "mysql" (OCI MySQL HeatWave) or "postgresql" (Supabase) with
+// scripts/schema-provider.ts, which the Dockerfile runs from its DB_PROVIDER
+// build arg; on MySQL it also widens long text fields to TEXT. Keep this
+// copy on sqlite.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite" // change to "postgresql" for Supabase / production
+  provider = "sqlite" // production: scripts/schema-provider.ts, not a hand edit
   url      = env("DATABASE_URL")
 }
 
