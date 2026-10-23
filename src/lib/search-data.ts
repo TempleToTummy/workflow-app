@@ -28,8 +28,9 @@ export type SearchHit = {
 
 export type SearchResults = Record<SearchGroupKey, { hits: SearchHit[]; total: number }>;
 
-// Case-insensitive `contains`. SQLite's LIKE already ignores ASCII case;
-// Postgres needs `mode: "insensitive"`, which SQLite's client rejects — so
+// Case-insensitive `contains`. SQLite's LIKE already ignores ASCII case, and
+// MySQL's default utf8mb4_0900_ai_ci collation ignores case (and accents);
+// Postgres needs `mode: "insensitive"`, which the other clients reject — so
 // it's only added when the database actually is Postgres.
 const IS_POSTGRES = /^postgres(ql)?:/.test(process.env.DATABASE_URL ?? "");
 function like(q: string) {

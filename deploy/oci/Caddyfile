@@ -1,0 +1,22 @@
+# HTTPS in front of the app. Caddy gets and renews a Let's Encrypt certificate
+# for DOMAIN on its own; DOMAIN's DNS must point at this VM and ports 80/443
+# must be open first (README.md, steps 3 and 6).
+#
+# Access logging is deliberately off: client request links (/r/<token>) carry
+# their credential in the URL, and a request log would keep every one of them.
+# Caddy also replaces any X-Forwarded-For a client sends, so the app's rate
+# limits and audit log see the real client address.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Uploads are capped at 15 MB by the app; a little headroom for the form.
+	request_body {
+		max_size 20MB
+	}
+
+	reverse_proxy app:3000
+}
